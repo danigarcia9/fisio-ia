@@ -1,0 +1,175 @@
+import { tool } from "ai";
+import { z } from "zod/v4";
+
+/**
+ * Tool que el agente llama para actualizar el árbol de hipótesis diagnósticas.
+ * Se invoca cada vez que hay nueva información (respuesta a pregunta, resultado de test, input libre).
+ */
+export const updateHypotheses = tool({
+  description:
+    "Actualiza el árbol de hipótesis diagnósticas basándose en la información disponible. " +
+    "Debe incluir todas las hipótesis activas con sus probabilidades recalculadas, " +
+    "las preguntas discriminatorias más relevantes para el estado actual, " +
+    "y opcionalmente tests clínicos sugeridos.",
+  inputSchema: z.object({
+    hypotheses: z.array(
+      z.object({
+        id: z.string().describe("ID único de la hipótesis"),
+        muscle: z
+          .string()
+          .describe("Músculo o estructura afectada, ej: 'Deltoides anterior'"),
+        condition: z
+          .string()
+          .describe("Condición/patología, ej: 'Tendinopatía deltoidea'"),
+        probability: z
+          .number()
+          .min(0)
+          .max(100)
+          .describe("Probabilidad estimada 0-100"),
+        justification: z
+          .string()
+          .describe("Justificación breve de la probabilidad asignada"),
+      })
+    ),
+    discriminatoryQuestions: z.array(
+      z.object({
+        id: z.string().describe("ID único de la pregunta"),
+        text: z
+          .string()
+          .describe(
+            "Texto de la pregunta en español, orientada al profesional"
+          ),
+        discriminatoryPower: z
+          .enum(["high", "medium", "low"])
+          .describe("Poder discriminatorio de la pregunta"),
+        targetHypotheses: z
+          .array(z.string())
+          .describe("IDs de hipótesis que esta pregunta ayuda a discriminar"),
+      })
+    ),
+    clinicalTestsSuggested: z
+      .array(
+        z.object({
+          name: z.string().describe("Nombre del test clínico"),
+          howToExecute: z
+            .string()
+            .describe("Instrucciones paso a paso de ejecución"),
+          positiveResult: z
+            .string()
+            .describe("Qué indica un resultado positivo"),
+          negativeResult: z
+            .string()
+            .describe("Qué indica un resultado negativo"),
+          targetHypotheses: z
+            .array(z.string())
+            .describe("IDs de hipótesis que este test ayuda a confirmar/descartar"),
+        })
+      )
+      .optional()
+      .describe("Tests clínicos sugeridos para la fase de exploración"),
+    reasoning: z
+      .string()
+      .describe("Justificación del recálculo del árbol de hipótesis"),
+  }),
+  execute: async (args) => args,
+});
+
+/**
+ * Tool para registrar red flags — síntomas que requieren derivación o atención especial.
+ * El agente la llama cuando detecta síntomas de alarma.
+ */
+export const flagRedFlag = tool({
+  description:
+    "Registra una red flag — síntoma que requiere derivación médica o atención especial. " +
+    "Usar cuando se detecten síntomas que escapan del ámbito del fisioterapeuta: " +
+    "dolor torácico potencialmente cardíaco, síntomas neurológicos graves, " +
+    "signos de patología sistémica, etc.",
+  inputSchema: z.object({
+    symptom: z.string().describe("Descripción del síntoma de alarma"),
+    severity: z
+      .enum(["urgent", "warning"])
+      .describe(
+        "'urgent' = derivación inmediata, 'warning' = vigilar y considerar derivación"
+      ),
+    recommendation: z
+      .string()
+      .describe(
+        "Recomendación concreta para el profesional (a quién derivar, qué hacer)"
+      ),
+  }),
+  execute: async (args) => args,
+});
+
+/**
+ * Tool para generar la propuesta terapéutica final.
+ * Se invoca cuando el profesional selecciona una hipótesis con confianza suficiente.
+ */
+export const proposeTherapy = tool({
+  description:
+    "Genera la propuesta terapéutica final para la hipótesis diagnóstica seleccionada. " +
+    "Las técnicas deben filtrarse por el perfil de clínica del profesional. " +
+    "Si una técnica recomendada no está disponible, sugerir alternativa.",
+  inputSchema: z.object({
+    diagnosis: z.string().describe("Diagnóstico final seleccionado"),
+    techniques: z.array(
+      z.object({
+        name: z.string().describe("Nombre de la técnica"),
+        description: z.string().describe("Descripción y cómo aplicarla"),
+        available: z
+          .boolean()
+          .describe("Si está disponible en el contexto de clínica actual"),
+        alternative: z
+          .string()
+          .optional()
+          .describe(
+            "Alternativa sugerida si no está disponible la técnica principal"
+          ),
+      })
+    ),
+    dryNeedling: z
+      .object({
+        muscle: z.string().describe("Músculo objetivo"),
+        technique: z.string().describe("Técnica de punción recomendada"),
+        patientPosition: z.string().describe("Posición del paciente"),
+        needleSize: z.string().describe("Tamaño de aguja recomendado"),
+        depth: z.string().describe("Profundidad de inserción"),
+        angle: z.string().describe("Ángulo de inserción"),
+        precautions: z
+          .array(z.string())
+          .describe("Precauciones y contraindicaciones"),
+      })
+      .optional()
+      .describe("Protocolo de punción seca si aplica"),
+    exercises: z.array(
+      z.object({
+        name: z.string().describe("Nombre del ejercicio"),
+        description: z.string().describe("Descripción y ejecución"),
+        sets: z
+          .string()
+          .describe("Series y repeticiones, ej: '3x12 repeticiones'"),
+        frequency: z.string().describe("Frecuencia, ej: '2 veces al día'"),
+      })
+    ),
+    sessionFrequency: z
+      .string()
+      .describe("Frecuencia recomendada de sesiones, ej: '2 sesiones/semana'"),
+    expectedEvolution: z
+      .string()
+      .describe(
+        "Evolución esperada del paciente con el tratamiento propuesto"
+      ),
+    followUpSigns: z
+      .array(z.string())
+      .describe(
+        "Señales a vigilar en el seguimiento que indicarían mala evolución"
+      ),
+  }),
+  execute: async (args) => args,
+});
+
+/** All diagnostic agent tools bundled for use in streamText */
+export const diagnosticTools = {
+  updateHypotheses,
+  flagRedFlag,
+  proposeTherapy,
+};
