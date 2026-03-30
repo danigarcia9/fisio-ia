@@ -10,20 +10,142 @@ export const SelectedZoneSchema = z.object({
   symptom: z.string(),
   triggers: z.array(z.string()),
   label: z.string(),
+  functionalInputs: z
+    .array(
+      z.object({
+        jointStructure: z.string(),
+        movement: z.string(),
+        provocationType: z.string(),
+        mechanicalCondition: z.string(),
+        romRangeDegrees: z.number().min(0).max(180).optional(),
+        painStartsAtDegrees: z.number().min(0).max(180).optional(),
+      })
+    )
+    .optional(),
 });
 export type SelectedZone = z.infer<typeof SelectedZoneSchema>;
 
-// --- Patient Profile ---
+// --- Patient Profile (3 dimensions) ---
 
-export const patientProfiles = [
+export const occupationalLoadOptions = [
   "sedentary",
-  "amateur_athlete",
-  "elite_athlete",
-  "physical_work",
+  "prolonged_standing",
+  "moderate_physical",
+  "heavy_physical",
 ] as const;
 
-export const PatientProfileSchema = z.enum(patientProfiles);
-export type PatientProfile = z.infer<typeof PatientProfileSchema>;
+export const OccupationalLoadSchema = z.enum(occupationalLoadOptions);
+export type OccupationalLoad = z.infer<typeof OccupationalLoadSchema>;
+
+export const activityVolumeOptions = [
+  "none",
+  "recreational",
+  "regular",
+  "high_performance",
+] as const;
+
+export const ActivityVolumeSchema = z.enum(activityVolumeOptions);
+export type ActivityVolume = z.infer<typeof ActivityVolumeSchema>;
+
+export const SportProfileSchema = z.object({
+  sportType: z.string(),
+  roleOrPosition: z.string().optional(),
+  details: z.string().optional(),
+});
+export type SportProfile = z.infer<typeof SportProfileSchema>;
+
+// --- Functional Movement Assessment (Step 3) ---
+
+export const jointStructureOptions = [
+  "shoulder",
+  "elbow",
+  "wrist",
+  "cervical",
+  "lumbar",
+  "hip",
+  "knee",
+  "ankle",
+] as const;
+
+export const JointStructureSchema = z.enum(jointStructureOptions);
+export type JointStructure = z.infer<typeof JointStructureSchema>;
+
+export const movementOptions = [
+  "flexion",
+  "extension",
+  "abduction",
+  "adduction",
+  "internal_rotation",
+  "external_rotation",
+  "pronation",
+  "supination",
+  "radial_deviation",
+  "ulnar_deviation",
+  "ipsilateral_inclination",
+  "contralateral_inclination",
+  "ipsilateral_rotation",
+  "contralateral_rotation",
+  "dorsiflexion",
+  "plantarflexion",
+  "inversion",
+  "eversion",
+  "forced_valgus",
+  "forced_varus",
+  "dynamic_valgus",
+  "dynamic_varus",
+] as const;
+
+export const MovementSchema = z.enum(movementOptions);
+export type Movement = z.infer<typeof MovementSchema>;
+
+export const provocationTypeOptions = [
+  "active_contraction",
+  "passive_stretch",
+  "active_stretch",
+  "resisted",
+  "passive_mobility",
+] as const;
+
+export const ProvocationTypeSchema = z.enum(provocationTypeOptions);
+export type ProvocationType = z.infer<typeof ProvocationTypeSchema>;
+
+export const mechanicalConditionOptions = [
+  "unloaded",
+  "loaded",
+  "compression",
+  "loaded_compression",
+] as const;
+
+export const MechanicalConditionSchema = z.enum(mechanicalConditionOptions);
+export type MechanicalCondition = z.infer<typeof MechanicalConditionSchema>;
+
+export const dominantSensationOptions = [
+  "pain",
+  "stiffness",
+  "blocking",
+  "instability",
+] as const;
+
+export const DominantSensationSchema = z.enum(dominantSensationOptions);
+export type DominantSensation = z.infer<typeof DominantSensationSchema>;
+
+export const FunctionalMovementAssessmentSchema = z.object({
+  id: z.string(),
+  order: z.number().int().min(1).optional(),
+  jointStructure: JointStructureSchema,
+  movement: MovementSchema,
+  provocationType: ProvocationTypeSchema,
+  mechanicalCondition: MechanicalConditionSchema,
+  painReproduced: z.boolean().optional(),
+  rangeLimited: z.boolean().optional(),
+  dominantSensation: DominantSensationSchema.optional(),
+  romRangeDegrees: z.number().min(0).max(180).optional(),
+  painStartsAtDegrees: z.number().min(0).max(180).optional(),
+  notes: z.string().optional(),
+});
+export type FunctionalMovementAssessment = z.infer<
+  typeof FunctionalMovementAssessmentSchema
+>;
 
 // --- Hypothesis ---
 
@@ -33,6 +155,7 @@ export const HypothesisSchema = z.object({
   condition: z.string(),
   probability: z.number().min(0).max(100),
   justification: z.string(),
+  causalChain: z.string().optional(),
   isActive: z.boolean(),
   confirmedByTest: z.string().optional(),
   discardedReason: z.string().optional(),
@@ -154,6 +277,28 @@ export const SessionEventSchema = z.discriminatedUnion("type", [
     description: z.string(),
     timestamp: z.string(),
   }),
+  z.object({
+    type: z.literal("submit_answers"),
+    answers: z.array(
+      z.object({
+        questionId: z.string(),
+        answer: z.enum(["yes", "no", "unclear"]),
+      })
+    ),
+    notes: z.string().optional(),
+    timestamp: z.string(),
+  }),
+  z.object({
+    type: z.literal("submit_test_results"),
+    results: z.array(
+      z.object({
+        testId: z.string(),
+        result: z.enum(["positive", "negative", "inconclusive"]),
+      })
+    ),
+    notes: z.string().optional(),
+    timestamp: z.string(),
+  }),
 ]);
 export type SessionEvent = z.infer<typeof SessionEventSchema>;
 
@@ -176,12 +321,16 @@ export const SessionStateSchema = z.object({
   id: z.string(),
   startedAt: z.string(),
 
-  // Patient inputs
+  // Patient inputs (3 dimensions)
   selectedZones: z.array(SelectedZoneSchema),
-  patientProfile: PatientProfileSchema,
+  occupationalLoad: OccupationalLoadSchema,
+  activityVolume: ActivityVolumeSchema,
+  sportProfile: SportProfileSchema.optional(),
   patientAge: z.number().optional(),
-  patientHabits: z.array(z.string()).optional(),
   contextId: z.string(),
+  functionalAssessments: z
+    .array(FunctionalMovementAssessmentSchema)
+    .default([]),
 
   // Session history
   history: z.array(SessionEventSchema),
@@ -204,10 +353,14 @@ export type SessionState = z.infer<typeof SessionStateSchema>;
 
 export const StartSessionRequestSchema = z.object({
   selectedZones: z.array(SelectedZoneSchema).min(1),
-  patientProfile: PatientProfileSchema,
+  occupationalLoad: OccupationalLoadSchema,
+  activityVolume: ActivityVolumeSchema,
+  sportProfile: SportProfileSchema.optional(),
   patientAge: z.number().min(0).max(120).optional(),
-  patientHabits: z.array(z.string()).optional(),
   contextId: z.string(),
+  functionalAssessments: z
+    .array(FunctionalMovementAssessmentSchema)
+    .default([]),
 });
 export type StartSessionRequest = z.infer<typeof StartSessionRequestSchema>;
 
@@ -216,6 +369,32 @@ export const UpdateSessionRequestSchema = z.object({
   newInput: SessionEventSchema,
 });
 export type UpdateSessionRequest = z.infer<typeof UpdateSessionRequestSchema>;
+
+export const SubmitAnswersRequestSchema = z.object({
+  sessionState: SessionStateSchema,
+  answers: z.array(
+    z.object({
+      questionId: z.string(),
+      answer: z.enum(["yes", "no", "unclear"]),
+    })
+  ),
+  notes: z.string().optional(),
+});
+export type SubmitAnswersRequest = z.infer<typeof SubmitAnswersRequestSchema>;
+
+export const SubmitTestResultsRequestSchema = z.object({
+  sessionState: SessionStateSchema,
+  results: z.array(
+    z.object({
+      testId: z.string(),
+      result: z.enum(["positive", "negative", "inconclusive"]),
+    })
+  ),
+  notes: z.string().optional(),
+});
+export type SubmitTestResultsRequest = z.infer<
+  typeof SubmitTestResultsRequestSchema
+>;
 
 export const ProposeTherapyRequestSchema = z.object({
   sessionState: SessionStateSchema,

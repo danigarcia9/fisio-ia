@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { UpdateSessionRequestSchema } from "@/lib/schemas/session";
 import { updateDiagnosticSession } from "@/lib/ai/agent";
+import { createStructuredStreamResponse } from "@/lib/ai/stream";
 import type { ClinicContext } from "@/lib/schemas/profile";
 
 export async function POST(request: NextRequest) {
@@ -56,43 +57,40 @@ export async function POST(request: NextRequest) {
     case "treatment_failed":
       inputDescription = `Un tratamiento previo no funcionó: ${newInput.description}`;
       break;
+    case "submit_answers": {
+      const answers = newInput.answers
+        .map((a) => {
+          const q = sessionState.discriminatoryQuestions.find(
+            (q) => q.id === a.questionId
+          );
+          return `- "${q?.text ?? a.questionId}": ${a.answer}`;
+        })
+        .join("\n");
+      inputDescription = `Respuestas en lote:\n${answers}${newInput.notes ? `\nNotas: ${newInput.notes}` : ""}`;
+      break;
+    }
+    case "submit_test_results": {
+      const results = newInput.results
+        .map((r) => {
+          const t = sessionState.clinicalTests.find(
+            (t) => t.id === r.testId
+          );
+          return `- "${t?.name ?? r.testId}": ${r.result}`;
+        })
+        .join("\n");
+      inputDescription = `Resultados de tests en lote:\n${results}${newInput.notes ? `\nNotas: ${newInput.notes}` : ""}`;
+      break;
+    }
   }
 
   try {
     const result = updateDiagnosticSession({
       sessionState,
       newInput: inputDescription,
-      context: {
-        professionalName,
-        clinicContext,
-      },
+      context: { professionalName, clinicContext },
     });
 
-    const [text, toolCalls, toolResults, steps] = await Promise.all([
-      result.text,
-      result.toolCalls,
-      result.toolResults,
-      result.steps,
-    ]);
-
-    const toolItems: Array<{ toolName: string; result: Record<string, unknown> }> = [];
-
-    for (const step of steps) {
-      if (step.toolResults) {
-        for (const tr of step.toolResults) {
-          const obj = tr as unknown as Record<string, unknown>;
-          const toolName = obj.toolName as string;
-          const result = (obj.result ?? obj.output ?? obj.input) as Record<string, unknown>;
-          if (toolName && result) {
-            toolItems.push({ toolName, result });
-          }
-        }
-      }
-    }
-
-    console.log("[session/update]", toolItems.length, "tool items:", toolItems.map(t => t.toolName));
-
-    return Response.json({ text, toolItems });
+    return createStructuredStreamResponse(result, "session/update");
   } catch (err) {
     console.error("Update session error:", err);
     return Response.json(

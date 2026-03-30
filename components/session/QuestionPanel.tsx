@@ -2,22 +2,41 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Question } from "@/lib/schemas/session";
 
 interface QuestionPanelProps {
   questions: Question[];
-  onAnswer: (questionId: string, answer: "yes" | "no" | "unclear") => void;
+  /** Pending (not yet submitted) answers: questionId → answer */
+  pendingAnswers: Record<string, "yes" | "no" | "unclear">;
+  onSelectAnswer: (
+    questionId: string,
+    answer: "yes" | "no" | "unclear"
+  ) => void;
+  onSubmit: () => void;
+  /** Optional notes for the batch submission */
+  notes: string;
+  onNotesChange: (notes: string) => void;
   isProcessing?: boolean;
 }
 
 export function QuestionPanel({
   questions,
-  onAnswer,
+  pendingAnswers,
+  onSelectAnswer,
+  onSubmit,
+  notes,
+  onNotesChange,
   isProcessing = false,
 }: QuestionPanelProps) {
-  const unanswered = questions.filter((q) => !q.answer);
-  const answered = questions.filter((q) => q.answer);
+  // Questions already submitted (have answer + answeredAt)
+  const submitted = questions.filter((q) => q.answer && q.answeredAt);
+  // Questions pending user action (no answer yet, or answer but no answeredAt)
+  const pending = questions.filter((q) => !q.answeredAt);
+
+  const pendingCount = Object.keys(pendingAnswers).length;
+  const allAnswered = pending.length > 0 && pendingCount === pending.length;
 
   return (
     <div className="flex flex-col gap-3">
@@ -25,38 +44,66 @@ export function QuestionPanel({
         <h3 className="text-base font-semibold tracking-tight">
           Preguntas discriminatorias
         </h3>
-        {unanswered.length > 0 && (
+        {pending.length > 0 && (
           <Badge variant="secondary" className="text-xs">
-            {unanswered.length} pendientes
+            {pending.length} pendientes
           </Badge>
         )}
       </div>
 
-      {unanswered.length === 0 && answered.length === 0 && (
+      {pending.length === 0 && submitted.length === 0 && (
         <p className="text-muted-foreground py-4 text-center text-sm">
           Las preguntas aparecerán cuando se generen hipótesis
         </p>
       )}
 
-      {/* Unanswered questions */}
-      <div className="flex flex-col gap-2">
-        {unanswered.map((question) => (
-          <QuestionCard
-            key={question.id}
-            question={question}
-            onAnswer={(answer) => onAnswer(question.id, answer)}
+      {/* Pending questions — user selects answers */}
+      {pending.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {pending.map((question) => (
+            <QuestionCard
+              key={question.id}
+              question={question}
+              selectedAnswer={pendingAnswers[question.id]}
+              onSelect={(answer) => onSelectAnswer(question.id, answer)}
+              disabled={isProcessing}
+            />
+          ))}
+
+          {/* Notes field */}
+          <Textarea
+            value={notes}
+            onChange={(e) => onNotesChange(e.target.value)}
+            placeholder="Notas adicionales del profesional (opcional)..."
+            rows={2}
+            className="mt-1 resize-none text-sm"
             disabled={isProcessing}
           />
-        ))}
-      </div>
 
-      {/* Answered questions */}
-      {answered.length > 0 && (
+          {/* Submit button */}
+          <Button
+            onClick={onSubmit}
+            disabled={pendingCount === 0 || isProcessing}
+            className="mt-1 h-11 w-full font-semibold"
+          >
+            {isProcessing
+              ? "Procesando..."
+              : allAnswered
+                ? "Enviar respuestas"
+                : pendingCount > 0
+                  ? `Enviar ${pendingCount} respuesta${pendingCount > 1 ? "s" : ""}`
+                  : "Selecciona respuestas"}
+          </Button>
+        </div>
+      )}
+
+      {/* Submitted questions */}
+      {submitted.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <span className="text-muted-foreground text-xs font-medium">
             Respondidas
           </span>
-          {answered.map((question) => (
+          {submitted.map((question) => (
             <div
               key={question.id}
               className="bg-muted/30 flex items-center justify-between rounded-lg px-3 py-2"
@@ -68,8 +115,10 @@ export function QuestionPanel({
                 variant="outline"
                 className={cn(
                   "text-xs",
-                  question.answer === "yes" && "border-green-500/30 text-green-600 dark:text-green-400",
-                  question.answer === "no" && "border-red-500/30 text-red-600 dark:text-red-400",
+                  question.answer === "yes" &&
+                    "border-green-500/30 text-green-600 dark:text-green-400",
+                  question.answer === "no" &&
+                    "border-red-500/30 text-red-600 dark:text-red-400",
                   question.answer === "unclear" &&
                     "border-yellow-500/30 text-yellow-600 dark:text-yellow-400"
                 )}
@@ -90,25 +139,30 @@ export function QuestionPanel({
 
 function QuestionCard({
   question,
-  onAnswer,
+  selectedAnswer,
+  onSelect,
   disabled,
 }: {
   question: Question;
-  onAnswer: (answer: "yes" | "no" | "unclear") => void;
+  selectedAnswer?: "yes" | "no" | "unclear";
+  onSelect: (answer: "yes" | "no" | "unclear") => void;
   disabled: boolean;
 }) {
   const powerColor =
     question.discriminatoryPower === "high"
       ? "bg-primary/10 text-primary"
       : question.discriminatoryPower === "medium"
-        ? "bg-yellow-500/10 text-yellow-400"
+        ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
         : "bg-muted text-muted-foreground";
 
   return (
     <div className="bg-card border-border rounded-xl border p-3">
       <div className="mb-2 flex items-start justify-between gap-2">
         <p className="text-sm leading-relaxed">{question.text}</p>
-        <Badge className={cn("shrink-0 text-[10px]", powerColor)} variant="secondary">
+        <Badge
+          className={cn("shrink-0 text-[10px]", powerColor)}
+          variant="secondary"
+        >
           {question.discriminatoryPower === "high"
             ? "Alta"
             : question.discriminatoryPower === "medium"
@@ -119,26 +173,27 @@ function QuestionCard({
       <div className="flex gap-2">
         <Button
           size="sm"
-          className="h-10 flex-1 text-sm"
-          onClick={() => onAnswer("yes")}
+          variant={selectedAnswer === "yes" ? "default" : "outline"}
+          className="h-12 flex-1 text-sm"
+          onClick={() => onSelect("yes")}
           disabled={disabled}
         >
           Sí
         </Button>
         <Button
           size="sm"
-          variant="outline"
-          className="h-10 flex-1 text-sm"
-          onClick={() => onAnswer("no")}
+          variant={selectedAnswer === "no" ? "default" : "outline"}
+          className="h-12 flex-1 text-sm"
+          onClick={() => onSelect("no")}
           disabled={disabled}
         >
           No
         </Button>
         <Button
           size="sm"
-          variant="ghost"
-          className="h-10 flex-1 text-sm"
-          onClick={() => onAnswer("unclear")}
+          variant={selectedAnswer === "unclear" ? "default" : "ghost"}
+          className="h-12 flex-1 text-sm"
+          onClick={() => onSelect("unclear")}
           disabled={disabled}
         >
           No claro

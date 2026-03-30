@@ -36,8 +36,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { sessionState, diagnosticAccuracy, utility, difficulty, notes } =
-    parsed.data;
+  const {
+    sessionState,
+    diagnosticAccuracy,
+    utility,
+    difficulty,
+    reasoningFailures,
+    notes,
+  } = parsed.data;
 
   const supabase = createServiceClient();
 
@@ -47,7 +53,7 @@ export async function POST(request: NextRequest) {
 
   const { error } = await supabase.from("dev_feedback_log").insert({
     patient_zone: sessionState.selectedZones.map((z) => z.label),
-    patient_profile: sessionState.patientProfile,
+    patient_profile: sessionState.occupationalLoad,
     patient_age: sessionState.patientAge ?? null,
     context_id: sessionState.contextId,
     hypotheses_generated: sessionState.hypotheses as unknown as Json,
@@ -63,6 +69,7 @@ export async function POST(request: NextRequest) {
     diagnostic_accuracy: diagnosticAccuracy,
     utility,
     difficulty,
+    reasoning_failures: reasoningFailures ?? null,
     notes: notes ?? null,
     raw_session_state: sessionState as unknown as Json,
   });

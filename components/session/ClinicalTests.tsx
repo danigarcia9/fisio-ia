@@ -2,25 +2,41 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { ClinicalTest } from "@/lib/schemas/session";
 
 interface ClinicalTestsProps {
   tests: ClinicalTest[];
-  onResult: (
+  /** Pending (not yet submitted) results: testId → result */
+  pendingResults: Record<
+    string,
+    "positive" | "negative" | "inconclusive"
+  >;
+  onSelectResult: (
     testId: string,
     result: "positive" | "negative" | "inconclusive"
   ) => void;
+  onSubmit: () => void;
+  notes: string;
+  onNotesChange: (notes: string) => void;
   isProcessing?: boolean;
 }
 
 export function ClinicalTests({
   tests,
-  onResult,
+  pendingResults,
+  onSelectResult,
+  onSubmit,
+  notes,
+  onNotesChange,
   isProcessing = false,
 }: ClinicalTestsProps) {
-  const pending = tests.filter((t) => !t.result);
-  const completed = tests.filter((t) => t.result);
+  const completed = tests.filter((t) => t.result && t.executedAt);
+  const pending = tests.filter((t) => !t.executedAt);
+
+  const pendingCount = Object.keys(pendingResults).length;
+  const allRecorded = pending.length > 0 && pendingCount === pending.length;
 
   if (tests.length === 0) return null;
 
@@ -38,16 +54,44 @@ export function ClinicalTests({
       </div>
 
       {/* Pending tests */}
-      <div className="flex flex-col gap-2">
-        {pending.map((test) => (
-          <TestCard
-            key={test.id}
-            test={test}
-            onResult={(result) => onResult(test.id, result)}
+      {pending.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {pending.map((test) => (
+            <TestCard
+              key={test.id}
+              test={test}
+              selectedResult={pendingResults[test.id]}
+              onSelect={(result) => onSelectResult(test.id, result)}
+              disabled={isProcessing}
+            />
+          ))}
+
+          {/* Notes field */}
+          <Textarea
+            value={notes}
+            onChange={(e) => onNotesChange(e.target.value)}
+            placeholder="Notas de la exploración (opcional)..."
+            rows={2}
+            className="mt-1 resize-none text-sm"
             disabled={isProcessing}
           />
-        ))}
-      </div>
+
+          {/* Submit button */}
+          <Button
+            onClick={onSubmit}
+            disabled={pendingCount === 0 || isProcessing}
+            className="mt-1 h-11 w-full font-semibold"
+          >
+            {isProcessing
+              ? "Procesando..."
+              : allRecorded
+                ? "Enviar resultados"
+                : pendingCount > 0
+                  ? `Enviar ${pendingCount} resultado${pendingCount > 1 ? "s" : ""}`
+                  : "Registra resultados"}
+          </Button>
+        </div>
+      )}
 
       {/* Completed tests */}
       {completed.length > 0 && (
@@ -65,8 +109,10 @@ export function ClinicalTests({
                 variant="outline"
                 className={cn(
                   "text-xs",
-                  test.result === "positive" && "border-green-500/30 text-green-600 dark:text-green-400",
-                  test.result === "negative" && "border-red-500/30 text-red-600 dark:text-red-400",
+                  test.result === "positive" &&
+                    "border-green-500/30 text-green-600 dark:text-green-400",
+                  test.result === "negative" &&
+                    "border-red-500/30 text-red-600 dark:text-red-400",
                   test.result === "inconclusive" &&
                     "border-yellow-500/30 text-yellow-600 dark:text-yellow-400"
                 )}
@@ -87,11 +133,13 @@ export function ClinicalTests({
 
 function TestCard({
   test,
-  onResult,
+  selectedResult,
+  onSelect,
   disabled,
 }: {
   test: ClinicalTest;
-  onResult: (result: "positive" | "negative" | "inconclusive") => void;
+  selectedResult?: "positive" | "negative" | "inconclusive";
+  onSelect: (result: "positive" | "negative" | "inconclusive") => void;
   disabled: boolean;
 }) {
   return (
@@ -102,12 +150,16 @@ function TestCard({
       </p>
       <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
         <div className="bg-green-500/5 rounded-lg p-2">
-          <span className="font-medium text-green-400">+ Positivo:</span>
+          <span className="font-medium text-green-600 dark:text-green-400">
+            + Positivo:
+          </span>
           <br />
           <span className="text-muted-foreground">{test.positiveResult}</span>
         </div>
         <div className="bg-red-500/5 rounded-lg p-2">
-          <span className="font-medium text-red-400">− Negativo:</span>
+          <span className="font-medium text-red-600 dark:text-red-400">
+            − Negativo:
+          </span>
           <br />
           <span className="text-muted-foreground">{test.negativeResult}</span>
         </div>
@@ -115,26 +167,27 @@ function TestCard({
       <div className="flex gap-2">
         <Button
           size="sm"
-          className="h-10 flex-1 text-sm"
-          onClick={() => onResult("positive")}
+          variant={selectedResult === "positive" ? "default" : "outline"}
+          className="h-12 flex-1 text-sm"
+          onClick={() => onSelect("positive")}
           disabled={disabled}
         >
           Positivo
         </Button>
         <Button
           size="sm"
-          variant="outline"
-          className="h-10 flex-1 text-sm"
-          onClick={() => onResult("negative")}
+          variant={selectedResult === "negative" ? "default" : "outline"}
+          className="h-12 flex-1 text-sm"
+          onClick={() => onSelect("negative")}
           disabled={disabled}
         >
           Negativo
         </Button>
         <Button
           size="sm"
-          variant="ghost"
-          className="h-10 flex-1 text-sm"
-          onClick={() => onResult("inconclusive")}
+          variant={selectedResult === "inconclusive" ? "default" : "ghost"}
+          className="h-12 flex-1 text-sm"
+          onClick={() => onSelect("inconclusive")}
           disabled={disabled}
         >
           Inconcluso

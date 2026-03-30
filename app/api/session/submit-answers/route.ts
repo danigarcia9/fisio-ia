@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { StartSessionRequestSchema } from "@/lib/schemas/session";
-import { startDiagnosticSession } from "@/lib/ai/agent";
+import { SubmitAnswersRequestSchema } from "@/lib/schemas/session";
+import { submitAnswersSession } from "@/lib/ai/agent";
 import { createStructuredStreamResponse } from "@/lib/ai/stream";
 import type { ClinicContext } from "@/lib/schemas/profile";
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const parsed = StartSessionRequestSchema.safeParse(body);
+  const parsed = SubmitAnswersRequestSchema.safeParse(body);
 
   if (!parsed.success) {
     return Response.json(
@@ -15,41 +15,29 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const {
-    selectedZones,
-    occupationalLoad,
-    activityVolume,
-    sportProfile,
-    patientAge,
-    contextId,
-    functionalAssessments,
-  } = parsed.data;
+  const { sessionState, answers, notes } = parsed.data;
 
   const clinicContext: ClinicContext = body.clinicContext ?? {
-    id: contextId,
+    id: sessionState.contextId,
     name: "Default",
     techniques: [],
     equipment: [],
   };
-
   const professionalName: string = body.professionalName ?? "Profesional";
 
   try {
-    const result = startDiagnosticSession({
-      selectedZones,
-      occupationalLoad,
-      activityVolume,
-      sportProfile,
-      patientAge,
-      functionalAssessments,
+    const result = submitAnswersSession({
+      sessionState,
+      answers,
+      notes,
       context: { professionalName, clinicContext },
     });
 
-    return createStructuredStreamResponse(result, "session/start");
+    return createStructuredStreamResponse(result, "session/submit-answers");
   } catch (err) {
-    console.error("Start session error:", err);
+    console.error("Submit answers error:", err);
     return Response.json(
-      { error: "Failed to start session" },
+      { error: "Failed to submit answers" },
       { status: 500 }
     );
   }

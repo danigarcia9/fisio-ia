@@ -16,12 +16,15 @@ import {
   type DiagnosticAccuracy,
   type Utility,
   type Difficulty,
+  type ReasoningFailure,
   diagnosticAccuracyLabels,
   utilityLabels,
   difficultyLabels,
+  reasoningFailureLabels,
   diagnosticAccuracyOptions,
   utilityOptions,
   difficultyOptions,
+  reasoningFailureOptions,
 } from "@/lib/schemas/feedback";
 
 interface FeedbackModalProps {
@@ -31,6 +34,7 @@ interface FeedbackModalProps {
     diagnosticAccuracy: DiagnosticAccuracy;
     utility: Utility;
     difficulty: Difficulty;
+    reasoningFailures?: ReasoningFailure[];
     notes?: string;
   }) => void;
   isSubmitting?: boolean;
@@ -45,9 +49,21 @@ export function FeedbackModal({
   const [accuracy, setAccuracy] = useState<DiagnosticAccuracy | null>(null);
   const [utility, setUtility] = useState<Utility | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
+  const [reasoningFailures, setReasoningFailures] = useState<
+    ReasoningFailure[]
+  >([]);
   const [notes, setNotes] = useState("");
 
   const canSubmit = accuracy && utility && difficulty;
+  const showReasoningFailures = accuracy && accuracy !== "top1";
+
+  function toggleReasoningFailure(failure: ReasoningFailure) {
+    setReasoningFailures((prev) =>
+      prev.includes(failure)
+        ? prev.filter((f) => f !== failure)
+        : [...prev, failure]
+    );
+  }
 
   function handleSubmit() {
     if (!canSubmit) return;
@@ -55,6 +71,8 @@ export function FeedbackModal({
       diagnosticAccuracy: accuracy,
       utility,
       difficulty,
+      reasoningFailures:
+        reasoningFailures.length > 0 ? reasoningFailures : undefined,
       notes: notes.trim() || undefined,
     });
   }
@@ -140,10 +158,42 @@ export function FeedbackModal({
             </div>
           </div>
 
+          {/* Reasoning failures — only when accuracy is not top1 */}
+          {showReasoningFailures && (
+            <div className="flex flex-col gap-2">
+              <Label className="text-sm font-semibold">
+                Dónde falló el razonamiento{" "}
+                <span className="text-muted-foreground font-normal">
+                  (opcional, multi-selección)
+                </span>
+              </Label>
+              <div className="flex flex-wrap gap-1.5">
+                {reasoningFailureOptions.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => toggleReasoningFailure(option)}
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-left text-xs transition-colors",
+                      reasoningFailures.includes(option)
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted hover:bg-muted/80"
+                    )}
+                  >
+                    {reasoningFailureLabels[option]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Notes */}
           <div className="flex flex-col gap-2">
             <Label className="text-sm font-semibold">
-              Notas <span className="text-muted-foreground font-normal">(opcional)</span>
+              Notas{" "}
+              <span className="text-muted-foreground font-normal">
+                (opcional)
+              </span>
             </Label>
             <Textarea
               value={notes}

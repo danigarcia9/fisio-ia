@@ -42,11 +42,31 @@ export const difficultyLabels: Record<Difficulty, string> = {
   hard: "Difícil",
 };
 
+export const reasoningFailureOptions = [
+  "ignored_postural_pattern",
+  "overestimated_sports_factor",
+  "missed_proximal_cause",
+  "missing_knowledge_base",
+  "other",
+] as const;
+
+export const ReasoningFailureSchema = z.enum(reasoningFailureOptions);
+export type ReasoningFailure = z.infer<typeof ReasoningFailureSchema>;
+
+export const reasoningFailureLabels: Record<ReasoningFailure, string> = {
+  ignored_postural_pattern: "Ignoró patrón postural/ocupacional",
+  overestimated_sports_factor: "Sobreestimó factor deportivo",
+  missed_proximal_cause: "No conectó zona de dolor con causa proximal",
+  missing_knowledge_base: "Faltaba conocimiento base (anatomía, referral)",
+  other: "Otro (ver notas)",
+};
+
 export const FeedbackRequestSchema = z.object({
   sessionState: SessionStateSchema,
   diagnosticAccuracy: DiagnosticAccuracySchema,
   utility: UtilitySchema,
   difficulty: DifficultySchema,
+  reasoningFailures: z.array(ReasoningFailureSchema).optional(),
   notes: z.string().optional(),
 });
 export type FeedbackRequest = z.infer<typeof FeedbackRequestSchema>;

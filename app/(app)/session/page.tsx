@@ -1,65 +1,48 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { ZoneSelector } from "@/components/session/ZoneSelector";
+import { Wizard } from "@/components/wizard/Wizard";
+import type { WizardResult } from "@/components/wizard/Wizard";
 import { HypothesisTree } from "@/components/session/HypothesisTree";
 import { QuestionPanel } from "@/components/session/QuestionPanel";
 import { ClinicalTests } from "@/components/session/ClinicalTests";
 import { RedFlagAlert } from "@/components/session/RedFlagAlert";
 import { TherapyProposal } from "@/components/session/TherapyProposal";
 import { FeedbackModal } from "@/components/session/FeedbackModal";
+import { useSessionStream } from "@/lib/hooks/useSessionStream";
+import {
+  OCCUPATIONAL_LOAD_LABELS,
+  ACTIVITY_VOLUME_LABELS,
+} from "@/lib/data/zones";
 import type {
   SessionState,
-  SelectedZone,
-  PatientProfile,
   Hypothesis,
-  RedFlag,
   TherapyProposal as TherapyProposalType,
 } from "@/lib/schemas/session";
 import type {
   DiagnosticAccuracy,
   Utility,
   Difficulty,
+  ReasoningFailure,
 } from "@/lib/schemas/feedback";
-import { patientProfiles } from "@/lib/schemas/session";
 import { ThemeToggle } from "@/components/theme-toggle";
-
-const profileLabels: Record<PatientProfile, string> = {
-  sedentary: "Sedentario",
-  amateur_athlete: "Deportista amateur",
-  elite_athlete: "Alto rendimiento",
-  physical_work: "Trabajo físico",
-};
-
-const COMMON_HABITS = [
-  "Corredor", "Ciclista", "Nadador", "Crossfit", "Gimnasio",
-  "Fútbol", "Pádel/Tenis", "Yoga/Pilates",
-  "Oficina", "Trabajo manual", "Conductor", "De pie mucho",
-  "Fumador", "Estrés alto", "Duerme poco", "Sueño irregular",
-];
+import { Spinner } from "@/components/ui/spinner";
 
 function createEmptySession(): SessionState {
   return {
     id: uuidv4(),
     startedAt: new Date().toISOString(),
     selectedZones: [],
-    patientProfile: "sedentary",
+    occupationalLoad: "sedentary",
+    activityVolume: "none",
+    sportProfile: undefined,
     patientAge: undefined,
-    patientHabits: [],
     contextId: "default",
+    functionalAssessments: [],
     history: [],
     hypotheses: [],
     discriminatoryQuestions: [],
@@ -70,245 +53,111 @@ function createEmptySession(): SessionState {
   };
 }
 
-// ─── Draggable resize hook ───
-function useResizable(initialWidth: number, min: number, max: number) {
-  const [width, setWidth] = useState(initialWidth);
-  const isDragging = useRef(false);
-  const startX = useRef(0);
-  const startW = useRef(0);
-
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      isDragging.current = true;
-      startX.current = e.clientX;
-      startW.current = width;
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-    },
-    [width]
-  );
-
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!isDragging.current) return;
-      const delta = e.clientX - startX.current;
-      const next = Math.max(min, Math.min(max, startW.current + delta));
-      setWidth(next);
-    }
-    function onMouseUp() {
-      if (!isDragging.current) return;
-      isDragging.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-  }, [min, max]);
-
-  return { width, onMouseDown };
-}
-
 // ─── Main page ───
+
 export default function SessionPage() {
   const [session, setSession] = useState<SessionState>(createEmptySession);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [freeInput, setFreeInput] = useState("");
   const [showFeedback, setShowFeedback] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
-  const [customHabit, setCustomHabit] = useState("");
-  const abortRef = useRef<AbortController | null>(null);
 
-  const { width: leftW, onMouseDown: onDragStart } = useResizable(440, 320, 600);
+  // Batch answer/test state
+  const [pendingAnswers, setPendingAnswers] = useState<
+    Record<string, "yes" | "no" | "unclear">
+  >({});
+  const [pendingTestResults, setPendingTestResults] = useState<
+    Record<string, "positive" | "negative" | "inconclusive">
+  >({});
+  const [questionNotes, setQuestionNotes] = useState("");
+  const [testNotes, setTestNotes] = useState("");
 
-  const isActive =
-    session.phase !== "initial" && session.phase !== "closed";
+  const { isStreaming, stream, abort } = useSessionStream();
 
-  // ─── Zone handlers ───
-  const handleZoneAdded = useCallback((zone: SelectedZone) => {
-    setSession((prev) => ({
-      ...prev,
-      selectedZones: [...prev.selectedZones, zone],
-    }));
-  }, []);
+  const isActive = session.phase !== "initial" && session.phase !== "closed";
+  const isInitial = session.phase === "initial";
 
-  const handleZoneRemoved = useCallback((zoneId: string) => {
-    setSession((prev) => ({
-      ...prev,
-      selectedZones: prev.selectedZones.filter((z) => z.id !== zoneId),
-    }));
-  }, []);
+  // ─── Structured stream done handler ───
+  const handleStreamDone = useCallback(
+    (data: Record<string, unknown>) => {
+      setSession((prev) => {
+        const updates: Partial<SessionState> = {};
 
-  // ─── Habit handlers ───
-  function toggleHabit(habit: string) {
-    setSession((prev) => ({
-      ...prev,
-      patientHabits: (prev.patientHabits ?? []).includes(habit)
-        ? (prev.patientHabits ?? []).filter((h) => h !== habit)
-        : [...(prev.patientHabits ?? []), habit],
-    }));
-  }
+        if (Array.isArray(data.hypotheses)) {
+          const hyps = (
+            data.hypotheses as Array<{
+              id: string;
+              muscle: string;
+              condition: string;
+              probability: number;
+              justification: string;
+              causalChain?: string;
+            }>
+          ).map((h) => ({ ...h, isActive: true }));
+          updates.hypotheses = mergeHypotheses(prev.hypotheses, hyps);
+        }
 
-  function addCustomHabit() {
-    if (!customHabit.trim()) return;
-    const h = customHabit.trim();
-    if (!(session.patientHabits ?? []).includes(h)) {
-      toggleHabit(h);
-    }
-    setCustomHabit("");
-  }
-
-  // ─── API calls ───
-  async function startSession() {
-    if (session.selectedZones.length === 0) return;
-    setIsProcessing(true);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    try {
-      const res = await fetch("/api/session/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          selectedZones: session.selectedZones,
-          patientProfile: session.patientProfile,
-          patientAge: session.patientAge,
-          patientHabits: session.patientHabits,
-          contextId: session.contextId,
-        }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw new Error("Failed");
-      processAgentResponse(await res.json());
-      setSession((p) => ({ ...p, phase: "questioning" }));
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      console.error("Start session error:", err);
-    } finally {
-      setIsProcessing(false);
-    }
-  }
-
-  async function updateSession(newInput: SessionState["history"][number]) {
-    setIsProcessing(true);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    const updated = { ...session, history: [...session.history, newInput] };
-    setSession(updated);
-    try {
-      const res = await fetch("/api/session/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionState: updated, newInput }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw new Error("Failed");
-      processAgentResponse(await res.json());
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      console.error("Update session error:", err);
-    } finally {
-      setIsProcessing(false);
-    }
-  }
-
-  async function proposeTherapy(hypothesisId: string) {
-    setIsProcessing(true);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    try {
-      const res = await fetch("/api/session/propose", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionState: session,
-          selectedHypothesisId: hypothesisId,
-        }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw new Error("Failed");
-      processAgentResponse(await res.json());
-      setSession((p) => ({ ...p, phase: "therapy_proposal" }));
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      console.error("Propose therapy error:", err);
-    } finally {
-      setIsProcessing(false);
-    }
-  }
-
-  // ─── Process AI response ───
-  function processAgentResponse(data: {
-    toolItems?: Array<{ toolName: string; result: Record<string, unknown> }>;
-  }) {
-    const all = data.toolItems ?? [];
-    console.log("[FisioIA]", all.length, "tool items:", all.map((a) => a.toolName));
-
-    for (const { toolName, result } of all) {
-      if (toolName === "updateHypotheses" && result) {
-        const hyps = (
-          result.hypotheses as Array<{
-            id: string;
-            muscle: string;
-            condition: string;
-            probability: number;
-            justification: string;
-          }>
-        ).map((h) => ({ ...h, isActive: true }));
-
-        const qs = (
-          result.discriminatoryQuestions as Array<{
+        if (Array.isArray(data.discriminatoryQuestions)) {
+          const qs = data.discriminatoryQuestions as Array<{
             id: string;
             text: string;
             discriminatoryPower: "high" | "medium" | "low";
             targetHypotheses: string[];
-          }>
-        ).map((q) => ({ ...q }));
-
-        const tests = (
-          (result.clinicalTestsSuggested as Array<{
-            name: string;
-            howToExecute: string;
-            positiveResult: string;
-            negativeResult: string;
-            targetHypotheses: string[];
-          }>) ?? []
-        ).map((t) => ({ ...t, id: uuidv4() }));
-
-        setSession((prev) => ({
-          ...prev,
-          hypotheses: mergeHypotheses(prev.hypotheses, hyps),
-          discriminatoryQuestions: [
-            ...prev.discriminatoryQuestions.filter((q) => q.answer),
+          }>;
+          updates.discriminatoryQuestions = [
+            ...prev.discriminatoryQuestions.filter((q) => q.answeredAt),
             ...qs,
-          ],
-          clinicalTests: [...prev.clinicalTests, ...tests],
-          phase:
-            tests.length > 0 && prev.phase === "questioning"
-              ? "examination"
-              : prev.phase,
-        }));
-      }
-      if (toolName === "flagRedFlag" && result) {
-        const flag: RedFlag = {
-          id: uuidv4(),
-          symptom: result.symptom as string,
-          severity: result.severity as "urgent" | "warning",
-          recommendation: result.recommendation as string,
-          detectedAt: new Date().toISOString(),
-        };
-        setSession((p) => ({ ...p, redFlags: [...p.redFlags, flag] }));
-      }
-      if (toolName === "proposeTherapy" && result) {
-        setSession((p) => ({
-          ...p,
-          therapyProposal: result as unknown as TherapyProposalType,
-        }));
-      }
-    }
-  }
+          ];
+        }
+
+        if (Array.isArray(data.clinicalTests)) {
+          const tests = (
+            data.clinicalTests as Array<{
+              id?: string;
+              name: string;
+              howToExecute: string;
+              positiveResult: string;
+              negativeResult: string;
+              targetHypotheses: string[];
+            }>
+          ).map((t) => ({ ...t, id: t.id ?? uuidv4() }));
+          updates.clinicalTests = [...prev.clinicalTests, ...tests];
+        }
+
+        if (
+          Array.isArray(data.redFlags) &&
+          (data.redFlags as unknown[]).length > 0
+        ) {
+          const flags = (
+            data.redFlags as Array<{
+              symptom: string;
+              severity: "urgent" | "warning";
+              recommendation: string;
+            }>
+          ).map((rf) => ({
+            ...rf,
+            id: uuidv4(),
+            detectedAt: new Date().toISOString(),
+          }));
+          updates.redFlags = [...prev.redFlags, ...flags];
+        }
+
+        if (
+          data.nextPhase === "examination" ||
+          Array.isArray(data.clinicalTests)
+        ) {
+          updates.phase = "examination";
+        }
+
+        if (typeof data.diagnosis === "string") {
+          updates.therapyProposal = data as unknown as TherapyProposalType;
+          updates.phase = "therapy_proposal";
+        }
+
+        return { ...prev, ...updates };
+      });
+    },
+    []
+  );
 
   function mergeHypotheses(existing: Hypothesis[], incoming: Hypothesis[]) {
     const merged = [...existing];
@@ -320,54 +169,188 @@ export default function SessionPage() {
     return merged;
   }
 
-  // ─── Event handlers ───
-  function handleAnswer(qId: string, answer: "yes" | "no" | "unclear") {
+  // ─── Wizard completion → start session ───
+  async function handleWizardComplete(result: WizardResult) {
+    const functionalAssessments = result.selectedZones.flatMap((z) =>
+      (z.functionalInputs ?? []).map((input, idx) => ({
+        id: uuidv4(),
+        order: idx + 1,
+        jointStructure:
+          input.jointStructure as SessionState["functionalAssessments"][number]["jointStructure"],
+        movement:
+          input.movement as SessionState["functionalAssessments"][number]["movement"],
+        provocationType:
+          input.provocationType as SessionState["functionalAssessments"][number]["provocationType"],
+        mechanicalCondition:
+          input.mechanicalCondition as SessionState["functionalAssessments"][number]["mechanicalCondition"],
+        romRangeDegrees: input.romRangeDegrees,
+        painStartsAtDegrees: input.painStartsAtDegrees,
+      }))
+    );
+
     setSession((p) => ({
       ...p,
-      discriminatoryQuestions: p.discriminatoryQuestions.map((q) =>
-        q.id === qId
-          ? { ...q, answer, answeredAt: new Date().toISOString() }
+      selectedZones: result.selectedZones,
+      occupationalLoad: result.occupationalLoad,
+      activityVolume: result.activityVolume,
+      sportProfile: result.sportProfile,
+      patientAge: result.patientAge,
+      phase: "questioning",
+      functionalAssessments,
+    }));
+
+    const payload: Record<string, unknown> = {
+      selectedZones: result.selectedZones,
+      occupationalLoad: result.occupationalLoad,
+      activityVolume: result.activityVolume,
+      sportProfile: result.sportProfile,
+      patientAge: result.patientAge,
+      contextId: "default",
+    };
+
+    if (functionalAssessments.length > 0) {
+      payload.functionalAssessments = functionalAssessments;
+    }
+
+    await stream("/api/session/start", payload, handleStreamDone);
+  }
+
+  // ─── API: Submit answers batch ───
+  async function handleSubmitAnswers() {
+    const answers = Object.entries(pendingAnswers).map(
+      ([questionId, answer]) => ({ questionId, answer })
+    );
+    if (answers.length === 0) return;
+
+    const now = new Date().toISOString();
+    setSession((prev) => ({
+      ...prev,
+      discriminatoryQuestions: prev.discriminatoryQuestions.map((q) =>
+        pendingAnswers[q.id]
+          ? { ...q, answer: pendingAnswers[q.id], answeredAt: now }
           : q
       ),
+      history: [
+        ...prev.history,
+        {
+          type: "submit_answers" as const,
+          answers,
+          notes: questionNotes || undefined,
+          timestamp: now,
+        },
+      ],
     }));
-    updateSession({
-      type: "question_answered",
-      questionId: qId,
-      answer,
-      timestamp: new Date().toISOString(),
-    });
+
+    const sessionForRequest = {
+      ...session,
+      discriminatoryQuestions: session.discriminatoryQuestions.map((q) =>
+        pendingAnswers[q.id]
+          ? { ...q, answer: pendingAnswers[q.id], answeredAt: now }
+          : q
+      ),
+    };
+
+    setPendingAnswers({});
+    setQuestionNotes("");
+
+    await stream(
+      "/api/session/submit-answers",
+      {
+        sessionState: sessionForRequest,
+        answers,
+        notes: questionNotes || undefined,
+      },
+      handleStreamDone
+    );
   }
 
-  function handleTestResult(
-    tId: string,
-    result: "positive" | "negative" | "inconclusive"
-  ) {
-    setSession((p) => ({
-      ...p,
-      clinicalTests: p.clinicalTests.map((t) =>
-        t.id === tId
-          ? { ...t, result, executedAt: new Date().toISOString() }
+  // ─── API: Submit test results batch ───
+  async function handleSubmitTestResults() {
+    const results = Object.entries(pendingTestResults).map(
+      ([testId, result]) => ({ testId, result })
+    );
+    if (results.length === 0) return;
+
+    const now = new Date().toISOString();
+    setSession((prev) => ({
+      ...prev,
+      clinicalTests: prev.clinicalTests.map((t) =>
+        pendingTestResults[t.id]
+          ? { ...t, result: pendingTestResults[t.id], executedAt: now }
           : t
       ),
+      history: [
+        ...prev.history,
+        {
+          type: "submit_test_results" as const,
+          results,
+          notes: testNotes || undefined,
+          timestamp: now,
+        },
+      ],
     }));
-    updateSession({
-      type: "test_result",
-      testId: tId,
-      result,
-      timestamp: new Date().toISOString(),
-    });
+
+    const sessionForRequest = {
+      ...session,
+      clinicalTests: session.clinicalTests.map((t) =>
+        pendingTestResults[t.id]
+          ? { ...t, result: pendingTestResults[t.id], executedAt: now }
+          : t
+      ),
+    };
+
+    setPendingTestResults({});
+    setTestNotes("");
+
+    await stream(
+      "/api/session/submit-tests",
+      {
+        sessionState: sessionForRequest,
+        results,
+        notes: testNotes || undefined,
+      },
+      handleStreamDone
+    );
   }
 
-  function handleFreeInput() {
+  // ─── API: Propose therapy ───
+  async function proposeTherapy(hypothesisId: string) {
+    await stream(
+      "/api/session/propose",
+      {
+        sessionState: session,
+        selectedHypothesisId: hypothesisId,
+      },
+      handleStreamDone
+    );
+  }
+
+  // ─── API: Free input ───
+  async function handleFreeInput() {
     if (!freeInput.trim()) return;
-    updateSession({
-      type: "free_input",
-      text: freeInput.trim(),
-      timestamp: new Date().toISOString(),
-    });
+    const text = freeInput.trim();
     setFreeInput("");
+
+    const now = new Date().toISOString();
+    const newInput = {
+      type: "free_input" as const,
+      text,
+      timestamp: now,
+    };
+
+    setSession((p) => ({
+      ...p,
+      history: [...p.history, newInput],
+    }));
+
+    await stream(
+      "/api/session/update",
+      { sessionState: session, newInput },
+      handleStreamDone
+    );
   }
 
+  // ─── Hypothesis actions ───
   function handleConfirm(id: string) {
     setSession((p) => ({
       ...p,
@@ -377,11 +360,6 @@ export default function SessionPage() {
           : h
       ),
     }));
-    updateSession({
-      type: "hypothesis_confirmed",
-      hypothesisId: id,
-      timestamp: new Date().toISOString(),
-    });
   }
 
   function handleDiscard(id: string, reason: string) {
@@ -391,12 +369,6 @@ export default function SessionPage() {
         h.id === id ? { ...h, isActive: false, discardedReason: reason } : h
       ),
     }));
-    updateSession({
-      type: "hypothesis_discarded",
-      hypothesisId: id,
-      reason,
-      timestamp: new Date().toISOString(),
-    });
   }
 
   function handleReopen(id: string) {
@@ -406,17 +378,14 @@ export default function SessionPage() {
         h.id === id ? { ...h, isActive: true, discardedReason: undefined } : h
       ),
     }));
-    updateSession({
-      type: "hypothesis_reopened",
-      hypothesisId: id,
-      timestamp: new Date().toISOString(),
-    });
   }
 
+  // ─── Feedback ───
   async function handleFeedback(feedback: {
     diagnosticAccuracy: DiagnosticAccuracy;
     utility: Utility;
     difficulty: Difficulty;
+    reasoningFailures?: ReasoningFailure[];
     notes?: string;
   }) {
     setIsSavingFeedback(true);
@@ -436,160 +405,15 @@ export default function SessionPage() {
   }
 
   function handleNew() {
-    abortRef.current?.abort();
+    abort();
     setSession(createEmptySession());
     setFreeInput("");
-    setCustomHabit("");
+    setPendingAnswers({});
+    setPendingTestResults({});
+    setQuestionNotes("");
+    setTestNotes("");
     setShowFeedback(false);
   }
-
-  const isInitial = session.phase === "initial";
-
-  // ─── Shared form pieces ───
-
-  const patientDataBlock = (
-    <>
-      {/* Profile + age row */}
-      <div className="flex items-end gap-3">
-        <div className="flex flex-1 flex-col gap-1.5">
-          <label className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
-            Perfil
-          </label>
-          <Select
-            value={session.patientProfile}
-            onValueChange={(v) =>
-              setSession((p) => ({
-                ...p,
-                patientProfile: v as PatientProfile,
-              }))
-            }
-            disabled={isActive}
-          >
-            <SelectTrigger className="h-11">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {patientProfiles.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {profileLabels[p]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex w-20 flex-col gap-1.5">
-          <label className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
-            Edad
-          </label>
-          <input
-            type="number"
-            min={0}
-            max={120}
-            placeholder="—"
-            value={session.patientAge ?? ""}
-            onChange={(e) =>
-              setSession((p) => ({
-                ...p,
-                patientAge: e.target.value
-                  ? parseInt(e.target.value)
-                  : undefined,
-              }))
-            }
-            disabled={isActive}
-            className="bg-card border-border h-11 rounded-lg border px-3 tabular-nums transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-      </div>
-
-      {/* Hábitos y actividad */}
-      <div className="flex flex-col gap-2">
-        <label className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
-          Hábitos y actividad
-        </label>
-        <div className="flex flex-wrap gap-1.5">
-          {COMMON_HABITS.map((h) => (
-            <button
-              key={h}
-              type="button"
-              onClick={() => toggleHabit(h)}
-              disabled={isActive}
-              className={cn(
-                "rounded-full px-2.5 py-1 text-xs font-medium transition-all active:scale-[0.97]",
-                (session.patientHabits ?? []).includes(h)
-                  ? "bg-teal-500/20 border border-teal-500/50 text-teal-700 dark:text-teal-200"
-                  : "bg-muted border border-transparent text-muted-foreground hover:bg-teal-500/10 hover:text-foreground"
-              )}
-            >
-              {h}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={customHabit}
-            onChange={(e) => setCustomHabit(e.target.value)}
-            placeholder="Otro hábito..."
-            disabled={isActive}
-            className="bg-card border-border h-9 flex-1 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && customHabit.trim()) addCustomHabit();
-            }}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={addCustomHabit}
-            disabled={!customHabit.trim() || isActive}
-            className="h-9 shrink-0"
-          >
-            +
-          </Button>
-        </div>
-      </div>
-    </>
-  );
-
-  const zoneSelectorBlock = (
-    <ZoneSelector
-      selectedZones={session.selectedZones}
-      onZoneAdded={handleZoneAdded}
-      onZoneRemoved={handleZoneRemoved}
-      disabled={isActive}
-    />
-  );
-
-  const freeInputBlock = isActive && (
-    <div className="flex flex-col gap-2">
-      <Separator className="opacity-50" />
-      <label className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
-        Info adicional
-      </label>
-      <div className="flex gap-2">
-        <Textarea
-          value={freeInput}
-          onChange={(e) => setFreeInput(e.target.value)}
-          placeholder="Escribe información del paciente..."
-          rows={2}
-          className="resize-none"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleFreeInput();
-            }
-          }}
-        />
-        <Button
-          onClick={handleFreeInput}
-          disabled={!freeInput.trim() || isProcessing}
-          size="sm"
-          className="h-auto self-end"
-        >
-          Enviar
-        </Button>
-      </div>
-    </div>
-  );
 
   // ─── Render ───
   return (
@@ -638,132 +462,168 @@ export default function SessionPage() {
 
       {/* ── Main layout ── */}
       <div className="flex min-h-0 flex-1">
-        {/* ══════════════════════════════════════════════
-            INITIAL: full-width two-column layout
-           ══════════════════════════════════════════════ */}
         {isInitial ? (
-          <div className="flex w-full flex-col">
-            <div className="flex-1 overflow-y-auto p-6 lg:p-10">
-              <div className="mx-auto grid max-w-5xl gap-8 lg:grid-cols-2 lg:gap-12">
-                {/* Left col: patient data */}
-                <div className="flex flex-col gap-5">
-                  <h2 className="text-foreground text-base font-semibold tracking-tight">
-                    Datos del paciente
-                  </h2>
-                  {patientDataBlock}
-                </div>
-
-                {/* Right col: zone selector */}
-                <div className="flex flex-col gap-5">
-                  <h2 className="text-foreground text-base font-semibold tracking-tight">
-                    Zona de dolor
-                  </h2>
-                  {zoneSelectorBlock}
-                </div>
-              </div>
-            </div>
-
-            {/* Sticky CTA */}
-            <div className="border-border/50 shrink-0 border-t p-4">
-              <div className="mx-auto max-w-5xl">
-                <Button
-                  onClick={startSession}
-                  disabled={session.selectedZones.length === 0 || isProcessing}
-                  className="h-12 w-full text-[15px] font-semibold"
-                >
-                  {isProcessing
-                    ? "Generando hipótesis..."
-                    : "Iniciar diagnóstico"}
-                </Button>
-              </div>
-            </div>
-          </div>
+          <Wizard onStart={handleWizardComplete} />
         ) : (
           /* ══════════════════════════════════════════════
-              ACTIVE / CLOSED: sidebar + results
+              DIAGNOSTIC VIEW: single column, full width
              ══════════════════════════════════════════════ */
-          <>
-            {/* ── LEFT sidebar ── */}
-            <div
-              className="flex shrink-0 flex-col animate-[sidebar-collapse_500ms_ease-in-out]"
-              style={{ width: leftW }}
-            >
-              <div className="flex-1 overflow-y-auto p-6">
-                <div className="flex flex-col gap-5">
-                  {patientDataBlock}
-                  {zoneSelectorBlock}
-                  {freeInputBlock}
+          <div className="flex w-full flex-col animate-[view-enter_400ms_ease-out]">
+            <div className="flex-1 overflow-y-auto p-6 lg:p-8">
+              <div className="mx-auto flex max-w-3xl flex-col gap-8">
+                {/* Patient summary card */}
+                <div className="bg-muted/40 rounded-2xl p-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary" className="text-xs">
+                      {OCCUPATIONAL_LOAD_LABELS[session.occupationalLoad]}
+                    </Badge>
+                    <Badge variant="secondary" className="text-xs">
+                      {ACTIVITY_VOLUME_LABELS[session.activityVolume]}
+                    </Badge>
+                    {session.sportProfile && (
+                      <Badge variant="secondary" className="text-xs">
+                        {session.sportProfile.sportType}
+                      </Badge>
+                    )}
+                    {session.patientAge && (
+                      <Badge variant="secondary" className="text-xs">
+                        {session.patientAge} años
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {session.selectedZones.map((z) => (
+                      <span
+                        key={z.id}
+                        className="bg-primary/10 text-primary inline-flex rounded-full px-3 py-1 text-xs font-medium"
+                      >
+                        {z.region}
+                        {z.side
+                          ? ` ${z.side === "left" ? "izq." : "der."}`
+                          : ""}{" "}
+                        · {z.subzone}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            {/* ── Resize handle ── */}
-            <div
-              className="group relative z-10 flex w-1.5 shrink-0 cursor-col-resize items-center justify-center"
-              onMouseDown={onDragStart}
-            >
-              <div className="bg-border group-hover:bg-primary/40 h-full w-px transition-colors" />
-              <div className="bg-border group-hover:bg-primary/60 absolute h-8 w-1 rounded-full transition-colors" />
-            </div>
+                <RedFlagAlert redFlags={session.redFlags} />
 
-            {/* ── RIGHT: Diagnostic results ── */}
-            <div className="flex min-w-0 flex-1 flex-col animate-[results-enter_500ms_ease-in-out]">
-              <div className="flex-1 overflow-y-auto p-6">
-                <div className="mx-auto flex max-w-2xl flex-col gap-6">
-                  <RedFlagAlert redFlags={session.redFlags} />
+                {/* Streaming indicator */}
+                {isStreaming && (
+                  <div className="bg-primary/5 border-primary/20 flex items-center gap-4 rounded-2xl border px-6 py-5">
+                    <Spinner className="text-primary size-5" />
+                    <div className="flex flex-col">
+                      <span className="text-foreground text-sm font-semibold">
+                        {session.phase === "questioning"
+                          ? "Analizando caso"
+                          : session.phase === "examination"
+                            ? "Interpretando exploración"
+                            : session.phase === "therapy_proposal"
+                              ? "Generando tratamiento"
+                              : "Procesando"}
+                      </span>
+                      <span className="text-muted-foreground text-xs">
+                        Procesando datos...
+                      </span>
+                    </div>
+                  </div>
+                )}
 
-                  <HypothesisTree
-                    hypotheses={session.hypotheses}
-                    onConfirm={handleConfirm}
-                    onDiscard={handleDiscard}
-                    onReopen={handleReopen}
-                    onSelectForTherapy={proposeTherapy}
-                    isProcessing={isProcessing}
-                  />
-
-                  {session.discriminatoryQuestions.length > 0 && (
-                    <>
-                      <Separator className="opacity-30" />
-                      <QuestionPanel
-                        questions={session.discriminatoryQuestions}
-                        onAnswer={handleAnswer}
-                        isProcessing={isProcessing}
-                      />
-                    </>
-                  )}
-
-                  {session.clinicalTests.length > 0 && (
-                    <>
-                      <Separator className="opacity-30" />
-                      <ClinicalTests
-                        tests={session.clinicalTests}
-                        onResult={handleTestResult}
-                        isProcessing={isProcessing}
-                      />
-                    </>
-                  )}
-
-                  {session.therapyProposal && (
-                    <>
-                      <Separator className="opacity-30" />
-                      <TherapyProposal proposal={session.therapyProposal} />
-                    </>
-                  )}
-
-                  {session.phase === "closed" && (
-                    <div className="py-12 text-center">
-                      <p className="text-muted-foreground">
-                        Sesión cerrada. Feedback guardado.
-                      </p>
-                      <Button onClick={handleNew} className="mt-4">
-                        Nuevo caso
-                      </Button>
+                {/* Empty state */}
+                {!isStreaming &&
+                  session.hypotheses.length === 0 &&
+                  session.phase !== "closed" && (
+                    <div className="text-muted-foreground py-20 text-center text-sm">
+                      Las hipótesis aparecerán aquí
                     </div>
                   )}
-                </div>
+
+                <HypothesisTree
+                  hypotheses={session.hypotheses}
+                  onConfirm={handleConfirm}
+                  onDiscard={handleDiscard}
+                  onReopen={handleReopen}
+                  onSelectForTherapy={proposeTherapy}
+                  isProcessing={isStreaming}
+                />
+
+                {session.discriminatoryQuestions.length > 0 && (
+                  <QuestionPanel
+                    questions={session.discriminatoryQuestions}
+                    pendingAnswers={pendingAnswers}
+                    onSelectAnswer={(qId, answer) =>
+                      setPendingAnswers((p) => ({ ...p, [qId]: answer }))
+                    }
+                    onSubmit={handleSubmitAnswers}
+                    notes={questionNotes}
+                    onNotesChange={setQuestionNotes}
+                    isProcessing={isStreaming}
+                  />
+                )}
+
+                {session.clinicalTests.length > 0 && (
+                  <ClinicalTests
+                    tests={session.clinicalTests}
+                    pendingResults={pendingTestResults}
+                    onSelectResult={(tId, result) =>
+                      setPendingTestResults((p) => ({
+                        ...p,
+                        [tId]: result,
+                      }))
+                    }
+                    onSubmit={handleSubmitTestResults}
+                    notes={testNotes}
+                    onNotesChange={setTestNotes}
+                    isProcessing={isStreaming}
+                  />
+                )}
+
+                {session.therapyProposal && (
+                  <TherapyProposal proposal={session.therapyProposal} />
+                )}
+
+                {session.phase === "closed" && (
+                  <div className="py-16 text-center">
+                    <p className="text-muted-foreground text-base">
+                      Sesión cerrada. Feedback guardado.
+                    </p>
+                    <Button onClick={handleNew} className="mt-6 h-12 px-8">
+                      Nuevo caso
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
-          </>
+
+            {/* Free input bar — sticky bottom */}
+            {isActive && (
+              <div className="border-border/50 shrink-0 border-t bg-background p-4">
+                <div className="mx-auto flex max-w-3xl gap-3">
+                  <Textarea
+                    value={freeInput}
+                    onChange={(e) => setFreeInput(e.target.value)}
+                    placeholder="Info adicional del paciente..."
+                    rows={1}
+                    className="min-h-12 resize-none"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleFreeInput();
+                      }
+                    }}
+                  />
+                  <Button
+                    onClick={handleFreeInput}
+                    disabled={!freeInput.trim() || isStreaming}
+                    className="h-12 shrink-0 px-6"
+                  >
+                    Enviar
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

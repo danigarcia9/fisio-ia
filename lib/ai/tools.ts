@@ -3,14 +3,13 @@ import { z } from "zod/v4";
 
 /**
  * Tool que el agente llama para actualizar el árbol de hipótesis diagnósticas.
- * Se invoca cada vez que hay nueva información (respuesta a pregunta, resultado de test, input libre).
+ * Genera hipótesis + preguntas discriminatorias. NO genera tests clínicos.
  */
 export const updateHypotheses = tool({
   description:
     "Actualiza el árbol de hipótesis diagnósticas basándose en la información disponible. " +
-    "Debe incluir todas las hipótesis activas con sus probabilidades recalculadas, " +
-    "las preguntas discriminatorias más relevantes para el estado actual, " +
-    "y opcionalmente tests clínicos sugeridos.",
+    "Incluye todas las hipótesis activas con probabilidades recalculadas y " +
+    "las preguntas discriminatorias más relevantes para el estado actual.",
   inputSchema: z.object({
     hypotheses: z.array(
       z.object({
@@ -29,6 +28,14 @@ export const updateHypotheses = tool({
         justification: z
           .string()
           .describe("Justificación breve de la probabilidad asignada"),
+        causalChain: z
+          .string()
+          .describe(
+            "Cadena causal: explica POR QUÉ esta patología en ESTE paciente concreto. " +
+            "Conecta perfil ocupacional + actividad deportiva + gesto desencadenante + zona. " +
+            "Ejemplo: 'Oficina 8h → flexión mantenida → acortamiento pectoral → " +
+            "punto gatillo infraespinoso → dolor referido hombro anterior'"
+          ),
       })
     ),
     discriminatoryQuestions: z.array(
@@ -47,26 +54,6 @@ export const updateHypotheses = tool({
           .describe("IDs de hipótesis que esta pregunta ayuda a discriminar"),
       })
     ),
-    clinicalTestsSuggested: z
-      .array(
-        z.object({
-          name: z.string().describe("Nombre del test clínico"),
-          howToExecute: z
-            .string()
-            .describe("Instrucciones paso a paso de ejecución"),
-          positiveResult: z
-            .string()
-            .describe("Qué indica un resultado positivo"),
-          negativeResult: z
-            .string()
-            .describe("Qué indica un resultado negativo"),
-          targetHypotheses: z
-            .array(z.string())
-            .describe("IDs de hipótesis que este test ayuda a confirmar/descartar"),
-        })
-      )
-      .optional()
-      .describe("Tests clínicos sugeridos para la fase de exploración"),
     reasoning: z
       .string()
       .describe("Justificación del recálculo del árbol de hipótesis"),
@@ -75,8 +62,41 @@ export const updateHypotheses = tool({
 });
 
 /**
+ * Tool para sugerir tests clínicos. Solo disponible en fase de exploración.
+ */
+export const suggestClinicalTests = tool({
+  description:
+    "Sugiere tests clínicos específicos para confirmar o descartar hipótesis. " +
+    "Solo usar cuando las hipótesis hayan convergido lo suficiente tras las preguntas discriminatorias.",
+  inputSchema: z.object({
+    clinicalTests: z.array(
+      z.object({
+        name: z.string().describe("Nombre del test clínico"),
+        howToExecute: z
+          .string()
+          .describe("Instrucciones paso a paso de ejecución"),
+        positiveResult: z
+          .string()
+          .describe("Qué indica un resultado positivo"),
+        negativeResult: z
+          .string()
+          .describe("Qué indica un resultado negativo"),
+        targetHypotheses: z
+          .array(z.string())
+          .describe(
+            "IDs de hipótesis que este test ayuda a confirmar/descartar"
+          ),
+      })
+    ),
+    reasoning: z
+      .string()
+      .describe("Justificación de los tests sugeridos"),
+  }),
+  execute: async (args) => args,
+});
+
+/**
  * Tool para registrar red flags — síntomas que requieren derivación o atención especial.
- * El agente la llama cuando detecta síntomas de alarma.
  */
 export const flagRedFlag = tool({
   description:
@@ -102,7 +122,6 @@ export const flagRedFlag = tool({
 
 /**
  * Tool para generar la propuesta terapéutica final.
- * Se invoca cuando el profesional selecciona una hipótesis con confianza suficiente.
  */
 export const proposeTherapy = tool({
   description:
@@ -167,9 +186,23 @@ export const proposeTherapy = tool({
   execute: async (args) => args,
 });
 
-/** All diagnostic agent tools bundled for use in streamText */
-export const diagnosticTools = {
+// ─── Phase-specific tool sets ───
+
+/** Initial + questioning: only hypotheses, questions, and red flags */
+export const questioningTools = {
   updateHypotheses,
   flagRedFlag,
+};
+
+/** Examination: adds clinical test suggestions */
+export const examinationTools = {
+  updateHypotheses,
+  suggestClinicalTests,
+  flagRedFlag,
+};
+
+/** Therapy proposal */
+export const therapyTools = {
   proposeTherapy,
+  flagRedFlag,
 };

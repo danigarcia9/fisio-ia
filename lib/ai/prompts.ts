@@ -1,5 +1,5 @@
 /**
- * FisioIA — System Prompt Architecture v0.2
+ * FisioIA — System Prompt Architecture v0.3
  *
  * Composition: BASE + REFERRED_PAIN_DOCTRINE + PHASE_BLOCK + CONTEXT + LANGUAGE
  * System prompt in English for optimal clinical reasoning.
@@ -177,30 +177,90 @@ o más o menos sigue igual?"
 This single question provides high discriminatory value in almost every case.
 `.trim();
 
+// ─── BLOCK 2B: CAUSAL CHAIN DOCTRINE (static, always present) ───
+
+const CAUSAL_CHAIN_DOCTRINE = `
+CAUSAL CHAIN REQUIREMENT — MANDATORY FOR ALL HYPOTHESES
+=========================================================
+For EVERY hypothesis in the tree, you MUST include a causal chain (in the causalChain field)
+that explains WHY this specific pathology would develop in THIS specific patient.
+
+The causal chain MUST connect ALL of these when available:
+1. Occupational/postural load → what sustained postures or forces does this create?
+2. Sports activity → what repetitive gestures, impacts, or load patterns?
+3. The INTERACTION between 1 and 2 → cumulative load, insufficient recovery,
+   biomechanical predisposition created by the combination
+4. How this leads to the specific tissue pathology → which structure fails and why
+5. Why pain manifests in this specific zone → local damage or referred pattern
+
+EXAMPLES OF GOOD CAUSAL CHAINS:
+
+"Oficina 8h (flexión torácica + protracción escapular) → acortamiento pectoral menor →
+escápula en rotación inferior → reducción espacio subacromial en elevación →
+fricción supraespinoso bajo acromion → tendinopatía supraespinoso →
+dolor cara lateral hombro, agravado por smash en pádel (elevación + rotación)"
+
+"Corredor 40km/semana + oficina sedentario → psoas acortado por flexión mantenida →
+compensación lumbar en zancada → hiperextensión repetida L4-L5 →
+irritación facetaria posterior → dolor lumbar que aumenta al final de carrera"
+
+"Trabajo de pie 8h → sobrecarga estática gemelo medial →
+punto gatillo activo gastrocnemio → dolor referido cara posterior rodilla →
+confunde con problema meniscal posterior"
+
+EXAMPLES OF BAD CAUSAL CHAINS (not acceptable):
+
+"Dolor en hombro → posible tendinopatía" — NO: falta el mecanismo causal
+"Deportista con dolor de rodilla → posible lesión ligamentosa" — NO: no conecta perfil con patología
+"Paciente sedentario con dolor lumbar" — NO: es una descripción, no una cadena causal
+
+The causal chain is what differentiates a clinical hypothesis from a symptom lookup table.
+`.trim();
+
 // ─── BLOCK 3: PHASE PROMPTS ───
 
 const PHASE_INITIAL = `
 CURRENT PHASE: INITIAL ASSESSMENT
 ==================================
-You have just received the first clinical data: pain zone(s), sub-zone(s), primary symptom
-type(s), pain triggers, patient activity profile, and habits.
+You have just received a clinical narrative describing the patient: their occupational load,
+sports activity, specific sport details, age, and pain presentation.
+
+You may also receive a functional movement profile (Step 3) with:
+- Articular structure tested
+- Movement performed
+- Provocation type (active contraction, active/passive stretch, passive mobility, resisted)
+- Mechanical condition (unloaded, loaded, compression)
+- ROM available
+- Pain-onset range (angle where pain starts)
+
+Treat this mechanical profile as high-value evidence for hypothesis ranking.
 
 IMPORTANT: The reported pain zone is the entry point, not the conclusion.
-Apply the referred pain doctrine fully before building your hypothesis tree.
+Apply the referred pain doctrine AND the causal chain requirement fully.
 
 Your task in this phase:
 
 1. GENERATE A FIRST HYPOTHESIS TREE (4-6 hypotheses)
 
    Always include a mix of TYPE A (local) and TYPE B (referred origin) hypotheses.
-   Order by probability given the zone + sub-zone + symptom + patient profile + triggers.
+   Order by probability given the FULL patient context: occupational load + sports +
+   age + zone + sub-zone + symptom + triggers.
 
    For each hypothesis:
    - Muscle/structure name — tagged as [Local] or [Dolor referido]
    - If referred: specify where the origin muscle is located
      Format: "[Dolor referido] Infraespinoso (origen: fosa infraespinosa, cara posterior hombro)"
-   - 1-sentence justification: why this profile + zone + symptom + triggers point here
    - Probability score (0-100)
+   - 1-sentence justification
+   - CAUSAL CHAIN (mandatory): connect occupational + sports → biomechanics → tissue → pain
+
+   Think about how the patient's daily load (occupational + sports) creates the
+   biomechanical conditions that lead to tissue pathology. The hypothesis must
+   explain the mechanism, not just name the structure.
+
+  IMPORTANT MECHANICAL RULE:
+  If pain appears consistently at a specific movement range and/or under load/compression,
+  explicitly incorporate that into probability ranking and causalChain.
 
 2. GENERATE THE 2-3 MOST DISCRIMINATORY QUESTIONS
 
@@ -211,18 +271,19 @@ Your task in this phase:
    For each question: specify which answer supports which hypothesis.
 
 3. CHECK FOR RED FLAGS
-   Based on zone, symptom type, triggers and profile, note any red flag patterns
-   Marco should actively rule out. Flag any neurological, vascular, or
+   Based on zone, symptom type, triggers, age, and occupational/sports profile, note any
+   red flag patterns Marco should actively rule out. Flag any neurological, vascular, or
    systemic indicators immediately.
 
-Use the updateHypotheses tool to structure your hypothesis tree and questions.
-Use the flagRedFlag tool for any red flags detected.
+IMPORTANT: Do NOT suggest clinical tests in this phase. Only generate hypotheses
+and discriminatory questions. Clinical tests will be suggested later after the
+professional has answered the questions and the hypothesis tree has converged.
 `.trim();
 
 const PHASE_QUESTIONING = `
 CURRENT PHASE: ACTIVE QUESTIONING
 ===================================
-Marco is asking the discriminatory questions and feeding back the patient's answers.
+Marco has answered discriminatory questions and is feeding back the patient's answers.
 
 Your task in this phase:
 
@@ -243,31 +304,40 @@ Your task in this phase:
      ask more targeted referred pain questions
    - Previous local treatment failed → raise TYPE B probability significantly
 
-2. GENERATE THE NEXT DISCRIMINATORY QUESTIONS (max 3)
-   - Based on current tree, identify the most useful next questions
-   - As tree converges, shift from differential to confirmation questions
-   - If a referred hypothesis is leading: suggest questions about the ORIGIN zone
-     Example: If infraspinatus referral is leading →
-     "¿Tienes también algo de tensión o molestia en la parte de atrás del hombro,
-     aunque sea más leve que donde te duele de verdad?"
-   - Plain language, patient-facing, conversational tone always
+2. DECIDE NEXT ACTION: MORE QUESTIONS OR CLINICAL TESTS
 
-3. SUGGEST CLINICAL TESTS (when appropriate)
-   - When hypotheses narrow to 1-3 candidates, suggest specific clinical tests
-   - For referred pain hypotheses: suggest palpation of the ORIGIN MUSCLE's
-     trigger point zone as the key confirmatory test
-   - For each test: name, execution, positive vs negative meaning,
-     which hypotheses it confirms or rules out
+   Evaluate the current hypothesis tree:
 
-4. MAINTAIN RED FLAG VIGILANCE
+   A) If hypotheses are still spread (top hypothesis < 60%, or multiple hypotheses
+      are close in probability, or key local-vs-referred distinction is unresolved):
+      → Include discriminatoryQuestions in your output, omit clinicalTests
+      → Set nextPhase to "questioning"
+      → As tree converges, shift from differential to confirmation questions
+      → If a referred hypothesis is leading: suggest questions about the ORIGIN zone
+
+   B) If hypotheses have converged sufficiently (top hypothesis ≥ 60% with clear
+      separation from others, or local-vs-referred distinction is clear):
+      → Include clinicalTests in your output, omit discriminatoryQuestions
+      → Set nextPhase to "examination"
+      → For referred pain hypotheses: suggest palpation of the ORIGIN MUSCLE's
+        trigger point zone as the key confirmatory test
+      → For each test: name, execution, positive vs negative meaning,
+        which hypotheses it confirms or rules out
+
+   IMPORTANT: Choose ONE path (A or B), not both. Either more questions OR tests.
+
+3. MAINTAIN RED FLAG VIGILANCE
    Any new answer raising a red flag concern must be flagged immediately.
+
+CAUSAL CHAIN UPDATE
+When recalculating hypotheses, update the causalChain for each hypothesis to reflect
+how the new information strengthens or weakens the biomechanical mechanism.
 
 REASONING TRANSPARENCY
 Briefly explain the key reasoning move when updating the tree, especially
 when shifting between local and referred hypotheses.
 
-Use the updateHypotheses tool to structure your updated hypothesis tree.
-Use the flagRedFlag tool for any new red flags detected.
+Plain language, patient-facing, conversational tone always for questions.
 `.trim();
 
 const PHASE_EXAMINATION = `
@@ -298,9 +368,9 @@ Your task in this phase:
    - The key finding: reproduction of the patient's familiar pain at the reported zone
    - Anatomical landmarks to orient palpation accurately
 
-3. SUGGEST THE NEXT MOST USEFUL TEST (one at a time)
-   - Prioritize tests that definitively distinguish local from referred origin if still unclear
-   - If converging clearly, say so and recommend moving to proposal phase
+3. DECIDE NEXT ACTION
+   - If more tests needed: include additional clinicalTests in your output
+   - If clinical picture is sufficiently clear: set readyForProposal to true
 
 4. CONVERGENCE SIGNAL
    When the clinical picture is sufficiently clear:
@@ -313,8 +383,9 @@ IF PREVIOUS TREATMENT FAILED
    real está en otro músculo que refiere aquí. Vamos a explorar [muscle origin]."
    → Raise all TYPE B hypothesis probabilities significantly.
 
-Use the updateHypotheses tool to structure your updated hypothesis tree.
-Use the flagRedFlag tool for any new red flags detected.
+CAUSAL CHAIN UPDATE
+Update causalChain for each hypothesis based on test results — strengthen or weaken
+the biomechanical mechanism explanation.
 `.trim();
 
 const PHASE_PROPOSAL = `
@@ -383,7 +454,7 @@ Your task in this phase:
    está aquí detrás, en la parte posterior. Es como cuando te duele la cabeza y el
    origen está en el cuello — tratamos donde está el problema real, no donde duele."
 
-Use the proposeTherapy tool to structure your treatment proposal.
+Structure your complete treatment proposal in the output fields.
 `.trim();
 
 const PHASE_PROMPTS: Record<PromptPhase, string> = {
@@ -454,7 +525,6 @@ the best available alternative.`.trim();
 
 /**
  * Builds the full system prompt by composing all blocks for the given phase and context.
- * ~1,500-1,700 tokens total. BASE + REFERRED_PAIN_DOCTRINE are cacheable across calls.
  */
 export function buildSystemPrompt(context: {
   phase: PromptPhase;
@@ -468,6 +538,7 @@ export function buildSystemPrompt(context: {
   return [
     BASE_PROMPT,
     REFERRED_PAIN_DOCTRINE,
+    CAUSAL_CHAIN_DOCTRINE,
     PHASE_PROMPTS[context.phase],
     buildContextBlock(context),
     LANGUAGE_INSTRUCTION,

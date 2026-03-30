@@ -179,6 +179,17 @@ function HypothesisCard({
       {/* Expanded content */}
       {expanded && (
         <div className="mt-3 flex flex-col gap-3">
+          {hypothesis.causalChain && (
+            <div className="bg-muted/40 rounded-lg px-3 py-2">
+              <p className="text-muted-foreground mb-0.5 text-[10px] font-medium uppercase tracking-wider">
+                Cadena causal
+              </p>
+              <p className="text-foreground text-xs leading-relaxed">
+                {hypothesis.causalChain}
+              </p>
+            </div>
+          )}
+
           <p className="text-muted-foreground text-xs leading-relaxed">
             {hypothesis.justification}
           </p>
@@ -193,7 +204,7 @@ function HypothesisCard({
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              className="h-8 text-xs"
+              className="h-10 text-sm"
               onClick={onSelectForTherapy}
             >
               Proponer tratamiento
@@ -201,7 +212,7 @@ function HypothesisCard({
             <Button
               size="sm"
               variant="outline"
-              className="h-8 text-xs"
+              className="h-10 text-sm"
               onClick={onConfirm}
             >
               Confirmar
@@ -209,7 +220,7 @@ function HypothesisCard({
             <Button
               size="sm"
               variant="ghost"
-              className="h-8 text-xs text-red-600 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300"
+              className="h-10 text-sm text-red-600 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300"
               onClick={() => setShowDiscardInput(!showDiscardInput)}
             >
               Descartar

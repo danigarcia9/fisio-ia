@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { ProposeTherapyRequestSchema } from "@/lib/schemas/session";
 import { proposeDiagnosticTherapy } from "@/lib/ai/agent";
+import { createStructuredStreamResponse } from "@/lib/ai/stream";
 import type { ClinicContext } from "@/lib/schemas/profile";
 
 export async function POST(request: NextRequest) {
@@ -28,37 +29,10 @@ export async function POST(request: NextRequest) {
     const result = proposeDiagnosticTherapy({
       sessionState,
       selectedHypothesisId,
-      context: {
-        professionalName,
-        clinicContext,
-      },
+      context: { professionalName, clinicContext },
     });
 
-    const [text, toolCalls, toolResults, steps] = await Promise.all([
-      result.text,
-      result.toolCalls,
-      result.toolResults,
-      result.steps,
-    ]);
-
-    const toolItems: Array<{ toolName: string; result: Record<string, unknown> }> = [];
-
-    for (const step of steps) {
-      if (step.toolResults) {
-        for (const tr of step.toolResults) {
-          const obj = tr as unknown as Record<string, unknown>;
-          const toolName = obj.toolName as string;
-          const result = (obj.result ?? obj.output ?? obj.input) as Record<string, unknown>;
-          if (toolName && result) {
-            toolItems.push({ toolName, result });
-          }
-        }
-      }
-    }
-
-    console.log("[session/propose]", toolItems.length, "tool items:", toolItems.map(t => t.toolName));
-
-    return Response.json({ text, toolItems });
+    return createStructuredStreamResponse(result, "session/propose");
   } catch (err) {
     console.error("Propose therapy error:", err);
     return Response.json(
