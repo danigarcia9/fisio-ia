@@ -24,12 +24,34 @@ const HypothesisOutputSchema = z.object({
   ),
 });
 
+const QuestionOptionSchema = z.object({
+  id: z.string().describe("Unique option ID, e.g. 'q1_a', 'q1_b'"),
+  label: z
+    .string()
+    .describe(
+      "Short button label in Spanish (max ~8 words), e.g. 'Más como un salto por dentro'"
+    ),
+  value: z
+    .string()
+    .describe(
+      "Internal semantic value for this option, e.g. 'snap_internal', 'grinding_surface'"
+    ),
+});
+
 const QuestionOutputSchema = z.object({
   id: z.string().describe("Unique ID, e.g. 'q1', 'q2'"),
   text: z
     .string()
     .describe(
       "Question text in Spanish, patient-friendly conversational language"
+    ),
+  options: z
+    .array(QuestionOptionSchema)
+    .describe(
+      "2-3 specific answer options tailored to this question. " +
+        "Each option should represent a distinct clinical scenario the patient might describe. " +
+        "Always include a final 'No claro' / 'No estoy seguro' option. " +
+        "NEVER use generic 'Sí' / 'No' — options must be descriptive and specific to the question."
     ),
   discriminatoryPower: z.enum(["high", "medium", "low"]),
   targetHypotheses: z

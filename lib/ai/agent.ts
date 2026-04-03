@@ -133,7 +133,7 @@ export function submitAnswersSession(params: {
   sessionState: SessionState;
   answers: Array<{
     questionId: string;
-    answer: "yes" | "no" | "unclear";
+    answer: string;
   }>;
   notes?: string;
   context: AgentContext;
@@ -149,7 +149,11 @@ export function submitAnswersSession(params: {
       const q = params.sessionState.discriminatoryQuestions.find(
         (q) => q.id === a.questionId
       );
-      return `- "${q?.text ?? a.questionId}": ${a.answer}`;
+      const selectedOption = q?.options?.find((o) => o.value === a.answer);
+      const answerLabel = selectedOption
+        ? `${selectedOption.label} (${selectedOption.value})`
+        : a.answer;
+      return `- "${q?.text ?? a.questionId}": ${answerLabel}`;
     })
     .join("\n");
 

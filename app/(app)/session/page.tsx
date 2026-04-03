@@ -67,7 +67,7 @@ export default function SessionPage() {
 
   // Batch answer/test state
   const [pendingAnswers, setPendingAnswers] = useState<
-    Record<string, "yes" | "no" | "unclear">
+    Record<string, string>
   >({});
   const [pendingTestResults, setPendingTestResults] = useState<
     Record<string, "positive" | "negative" | "inconclusive">
@@ -114,9 +114,9 @@ export default function SessionPage() {
     }
   }, [session]);
 
-  // ─── Structured stream done handler ───
-  const handleStreamDone = useCallback(
-    (data: Record<string, unknown>) => {
+  // ─── Apply partial/full data to session ───
+  const applyStreamData = useCallback(
+    (data: Record<string, unknown>, isFinal: boolean) => {
       setSession((prev) => {
         const updates: Partial<SessionState> = {};
 
@@ -138,12 +138,13 @@ export default function SessionPage() {
           const qs = data.discriminatoryQuestions as Array<{
             id: string;
             text: string;
+            options?: Array<{ id: string; label: string; value: string }>;
             discriminatoryPower: "high" | "medium" | "low";
             targetHypotheses: string[];
           }>;
           updates.discriminatoryQuestions = [
             ...prev.discriminatoryQuestions.filter((q) => q.answeredAt),
-            ...qs,
+            ...qs.map((q) => ({ ...q, options: q.options ?? [] })),
           ];
         }
 
@@ -158,7 +159,15 @@ export default function SessionPage() {
               targetHypotheses: string[];
             }>
           ).map((t) => ({ ...t, id: t.id ?? uuidv4() }));
-          updates.clinicalTests = [...prev.clinicalTests, ...tests];
+          // For partials, replace; for final, append to existing
+          if (isFinal) {
+            updates.clinicalTests = [...prev.clinicalTests, ...tests];
+          } else {
+            updates.clinicalTests = [
+              ...prev.clinicalTests.filter((t) => t.result),
+              ...tests,
+            ];
+          }
         }
 
         if (
@@ -181,7 +190,7 @@ export default function SessionPage() {
 
         if (
           data.nextPhase === "examination" ||
-          Array.isArray(data.clinicalTests)
+          (isFinal && Array.isArray(data.clinicalTests) && (data.clinicalTests as unknown[]).length > 0)
         ) {
           updates.phase = "examination";
         }
@@ -195,6 +204,16 @@ export default function SessionPage() {
       });
     },
     []
+  );
+
+  const handleStreamPartial = useCallback(
+    (data: Record<string, unknown>) => applyStreamData(data, false),
+    [applyStreamData]
+  );
+
+  const handleStreamDone = useCallback(
+    (data: Record<string, unknown>) => applyStreamData(data, true),
+    [applyStreamData]
   );
 
   function mergeHypotheses(existing: Hypothesis[], incoming: Hypothesis[]) {
@@ -250,7 +269,7 @@ export default function SessionPage() {
       payload.functionalAssessments = functionalAssessments;
     }
 
-    await stream("/api/session/start", payload, handleStreamDone);
+    await stream("/api/session/start", payload, handleStreamDone, handleStreamPartial);
   }
 
   // ─── API: Submit answers batch ───
@@ -298,7 +317,8 @@ export default function SessionPage() {
         answers,
         notes: questionNotes || undefined,
       },
-      handleStreamDone
+      handleStreamDone,
+      handleStreamPartial
     );
   }
 
@@ -347,7 +367,8 @@ export default function SessionPage() {
         results,
         notes: testNotes || undefined,
       },
-      handleStreamDone
+      handleStreamDone,
+      handleStreamPartial
     );
   }
 
@@ -359,7 +380,8 @@ export default function SessionPage() {
         sessionState: session,
         selectedHypothesisId: hypothesisId,
       },
-      handleStreamDone
+      handleStreamDone,
+      handleStreamPartial
     );
   }
 
@@ -384,7 +406,8 @@ export default function SessionPage() {
     await stream(
       "/api/session/update",
       { sessionState: session, newInput },
-      handleStreamDone
+      handleStreamDone,
+      handleStreamPartial
     );
   }
 

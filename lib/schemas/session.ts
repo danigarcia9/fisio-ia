@@ -164,12 +164,20 @@ export type Hypothesis = z.infer<typeof HypothesisSchema>;
 
 // --- Question ---
 
+export const QuestionOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  value: z.string(),
+});
+export type QuestionOption = z.infer<typeof QuestionOptionSchema>;
+
 export const QuestionSchema = z.object({
   id: z.string(),
   text: z.string(),
+  options: z.array(QuestionOptionSchema).default([]),
   discriminatoryPower: z.enum(["high", "medium", "low"]),
   targetHypotheses: z.array(z.string()),
-  answer: z.enum(["yes", "no", "unclear"]).optional(),
+  answer: z.string().optional(),
   answeredAt: z.string().optional(),
 });
 export type Question = z.infer<typeof QuestionSchema>;
@@ -242,7 +250,7 @@ export const SessionEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("question_answered"),
     questionId: z.string(),
-    answer: z.enum(["yes", "no", "unclear"]),
+    answer: z.string(),
     timestamp: z.string(),
   }),
   z.object({
@@ -282,7 +290,7 @@ export const SessionEventSchema = z.discriminatedUnion("type", [
     answers: z.array(
       z.object({
         questionId: z.string(),
-        answer: z.enum(["yes", "no", "unclear"]),
+        answer: z.string(),
       })
     ),
     notes: z.string().optional(),
@@ -375,7 +383,7 @@ export const SubmitAnswersRequestSchema = z.object({
   answers: z.array(
     z.object({
       questionId: z.string(),
-      answer: z.enum(["yes", "no", "unclear"]),
+      answer: z.string(),
     })
   ),
   notes: z.string().optional(),

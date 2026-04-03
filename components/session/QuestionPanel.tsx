@@ -8,12 +8,9 @@ import type { Question } from "@/lib/schemas/session";
 
 interface QuestionPanelProps {
   questions: Question[];
-  /** Pending (not yet submitted) answers: questionId → answer */
-  pendingAnswers: Record<string, "yes" | "no" | "unclear">;
-  onSelectAnswer: (
-    questionId: string,
-    answer: "yes" | "no" | "unclear"
-  ) => void;
+  /** Pending (not yet submitted) answers: questionId → option value */
+  pendingAnswers: Record<string, string>;
+  onSelectAnswer: (questionId: string, answer: string) => void;
   onSubmit: () => void;
   /** Optional notes for the batch submission */
   notes: string;
@@ -103,34 +100,29 @@ export function QuestionPanel({
           <span className="text-muted-foreground text-xs font-medium">
             Respondidas
           </span>
-          {submitted.map((question) => (
-            <div
-              key={question.id}
-              className="bg-muted/30 flex items-center justify-between rounded-lg px-3 py-2"
-            >
-              <span className="text-muted-foreground text-xs">
-                {question.text}
-              </span>
-              <Badge
-                variant="outline"
-                className={cn(
-                  "text-xs",
-                  question.answer === "yes" &&
-                    "border-green-500/30 text-green-600 dark:text-green-400",
-                  question.answer === "no" &&
-                    "border-red-500/30 text-red-600 dark:text-red-400",
-                  question.answer === "unclear" &&
-                    "border-yellow-500/30 text-yellow-600 dark:text-yellow-400"
-                )}
+          {submitted.map((question) => {
+            const selectedOption = question.options?.find(
+              (o) => o.value === question.answer
+            );
+            const answerLabel = selectedOption?.label ?? question.answer;
+
+            return (
+              <div
+                key={question.id}
+                className="bg-muted/30 flex items-center justify-between rounded-lg px-3 py-2"
               >
-                {question.answer === "yes"
-                  ? "Sí"
-                  : question.answer === "no"
-                    ? "No"
-                    : "No claro"}
-              </Badge>
-            </div>
-          ))}
+                <span className="text-muted-foreground text-xs">
+                  {question.text}
+                </span>
+                <Badge
+                  variant="outline"
+                  className="text-xs max-w-50 truncate"
+                >
+                  {answerLabel}
+                </Badge>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -144,8 +136,8 @@ function QuestionCard({
   disabled,
 }: {
   question: Question;
-  selectedAnswer?: "yes" | "no" | "unclear";
-  onSelect: (answer: "yes" | "no" | "unclear") => void;
+  selectedAnswer?: string;
+  onSelect: (answer: string) => void;
   disabled: boolean;
 }) {
   const powerColor =
@@ -154,6 +146,8 @@ function QuestionCard({
       : question.discriminatoryPower === "medium"
         ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
         : "bg-muted text-muted-foreground";
+
+  const hasOptions = question.options && question.options.length > 0;
 
   return (
     <div className="bg-card border-border rounded-xl border p-3">
@@ -170,34 +164,52 @@ function QuestionCard({
               : "Baja"}
         </Badge>
       </div>
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          variant={selectedAnswer === "yes" ? "default" : "outline"}
-          className="h-12 flex-1 text-sm"
-          onClick={() => onSelect("yes")}
-          disabled={disabled}
-        >
-          Sí
-        </Button>
-        <Button
-          size="sm"
-          variant={selectedAnswer === "no" ? "default" : "outline"}
-          className="h-12 flex-1 text-sm"
-          onClick={() => onSelect("no")}
-          disabled={disabled}
-        >
-          No
-        </Button>
-        <Button
-          size="sm"
-          variant={selectedAnswer === "unclear" ? "default" : "ghost"}
-          className="h-12 flex-1 text-sm"
-          onClick={() => onSelect("unclear")}
-          disabled={disabled}
-        >
-          No claro
-        </Button>
+      <div className="flex flex-col gap-1.5">
+        {hasOptions ? (
+          question.options.map((option) => (
+            <Button
+              key={option.id}
+              size="sm"
+              variant={selectedAnswer === option.value ? "default" : "outline"}
+              className="h-auto min-h-10 w-full whitespace-normal px-3 py-2 text-sm text-left justify-start"
+              onClick={() => onSelect(option.value)}
+              disabled={disabled}
+            >
+              {option.label}
+            </Button>
+          ))
+        ) : (
+          /* Fallback for questions without options (e.g. from partial stream) */
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant={selectedAnswer === "yes" ? "default" : "outline"}
+              className="h-12 flex-1 text-sm"
+              onClick={() => onSelect("yes")}
+              disabled={disabled}
+            >
+              Sí
+            </Button>
+            <Button
+              size="sm"
+              variant={selectedAnswer === "no" ? "default" : "outline"}
+              className="h-12 flex-1 text-sm"
+              onClick={() => onSelect("no")}
+              disabled={disabled}
+            >
+              No
+            </Button>
+            <Button
+              size="sm"
+              variant={selectedAnswer === "unclear" ? "default" : "ghost"}
+              className="h-12 flex-1 text-sm"
+              onClick={() => onSelect("unclear")}
+              disabled={disabled}
+            >
+              No claro
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
