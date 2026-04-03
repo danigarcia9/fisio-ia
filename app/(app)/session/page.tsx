@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import type {
   Hypothesis,
   TherapyProposal as TherapyProposalType,
 } from "@/lib/schemas/session";
+import { SessionStateSchema } from "@/lib/schemas/session";
 import type {
   DiagnosticAccuracy,
   Utility,
@@ -31,6 +32,8 @@ import type {
 } from "@/lib/schemas/feedback";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Spinner } from "@/components/ui/spinner";
+
+const SESSION_DRAFT_STORAGE_KEY = "fisioia:session-draft:v1";
 
 function createEmptySession(): SessionState {
   return {
@@ -60,6 +63,7 @@ export default function SessionPage() {
   const [freeInput, setFreeInput] = useState("");
   const [showFeedback, setShowFeedback] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   // Batch answer/test state
   const [pendingAnswers, setPendingAnswers] = useState<
@@ -75,6 +79,40 @@ export default function SessionPage() {
 
   const isActive = session.phase !== "initial" && session.phase !== "closed";
   const isInitial = session.phase === "initial";
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SESSION_DRAFT_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as SessionState;
+      const validated = SessionStateSchema.parse(parsed);
+
+      if (validated.phase !== "closed") {
+        setSession(validated);
+      } else {
+        window.localStorage.removeItem(SESSION_DRAFT_STORAGE_KEY);
+      }
+    } catch {
+      window.localStorage.removeItem(SESSION_DRAFT_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (session.phase === "initial" || session.phase === "closed") {
+        window.localStorage.removeItem(SESSION_DRAFT_STORAGE_KEY);
+        return;
+      }
+
+      window.localStorage.setItem(
+        SESSION_DRAFT_STORAGE_KEY,
+        JSON.stringify(session)
+      );
+    } catch {
+      // Ignore localStorage write failures (private mode/quota)
+    }
+  }, [session]);
 
   // ─── Structured stream done handler ───
   const handleStreamDone = useCallback(
@@ -388,17 +426,35 @@ export default function SessionPage() {
     reasoningFailures?: ReasoningFailure[];
     notes?: string;
   }) {
+    setFeedbackError(null);
     setIsSavingFeedback(true);
     try {
-      await fetch("/api/feedback", {
+      const response = await fetch("/api/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionState: session, ...feedback }),
       });
+
+      if (!response.ok) {
+        const errorBody = (await response.json().catch(() => null)) as
+          | { error?: string; details?: string }
+          | null;
+
+        throw new Error(
+          errorBody?.details ?? errorBody?.error ?? "No se pudo guardar feedback"
+        );
+      }
+
+      window.localStorage.removeItem(SESSION_DRAFT_STORAGE_KEY);
       setSession((p) => ({ ...p, phase: "closed" }));
       setShowFeedback(false);
     } catch (err) {
       console.error("Feedback error:", err);
+      setFeedbackError(
+        err instanceof Error
+          ? err.message
+          : "No se pudo guardar el feedback. Revisa la conexion y Supabase."
+      );
     } finally {
       setIsSavingFeedback(false);
     }
@@ -406,12 +462,14 @@ export default function SessionPage() {
 
   function handleNew() {
     abort();
+    window.localStorage.removeItem(SESSION_DRAFT_STORAGE_KEY);
     setSession(createEmptySession());
     setFreeInput("");
     setPendingAnswers({});
     setPendingTestResults({});
     setQuestionNotes("");
     setTestNotes("");
+    setFeedbackError(null);
     setShowFeedback(false);
   }
 
@@ -434,7 +492,10 @@ export default function SessionPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowFeedback(true)}
+              onClick={() => {
+                setFeedbackError(null);
+                setShowFeedback(true);
+              }}
               className="text-muted-foreground hover:text-foreground"
             >
               Cerrar sesión
@@ -633,6 +694,7 @@ export default function SessionPage() {
         onClose={() => setShowFeedback(false)}
         onSubmit={handleFeedback}
         isSubmitting={isSavingFeedback}
+        errorMessage={feedbackError}
       />
     </div>
   );

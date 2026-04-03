@@ -55,6 +55,7 @@ export interface Database {
           diagnostic_accuracy: string | null;
           utility: string | null;
           difficulty: string | null;
+          reasoning_failures: string[] | null;
           notes: string | null;
           raw_session_state: Json | null;
           created_at: string;
@@ -74,6 +75,7 @@ export interface Database {
           diagnostic_accuracy?: string | null;
           utility?: string | null;
           difficulty?: string | null;
+          reasoning_failures?: string[] | null;
           notes?: string | null;
           raw_session_state?: Json | null;
           created_at?: string;
@@ -93,6 +95,7 @@ export interface Database {
           diagnostic_accuracy?: string | null;
           utility?: string | null;
           difficulty?: string | null;
+          reasoning_failures?: string[] | null;
           notes?: string | null;
           raw_session_state?: Json | null;
           created_at?: string;

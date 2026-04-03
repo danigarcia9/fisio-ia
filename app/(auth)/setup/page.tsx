@@ -23,6 +23,7 @@ export default function SetupPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Step 1
   const [name, setName] = useState("");
@@ -45,6 +46,7 @@ export default function SetupPage() {
   }
 
   async function handleFinish() {
+    setSaveError(null);
     setSaving(true);
     const contextId = uuidv4();
     try {
@@ -64,9 +66,22 @@ export default function SetupPage() {
           activeContextId: contextId,
         }),
       });
-      if (!res.ok) throw new Error("Failed to create profile");
+      if (!res.ok) {
+        const errorBody = (await res.json().catch(() => null)) as
+          | { error?: string; details?: string }
+          | null;
+
+        throw new Error(
+          errorBody?.details ?? errorBody?.error ?? "No se pudo guardar el perfil"
+        );
+      }
       router.push("/session");
-    } catch {
+    } catch (err) {
+      setSaveError(
+        err instanceof Error
+          ? err.message
+          : "No se pudo guardar el perfil. Revisa Supabase y vuelve a intentar."
+      );
       setSaving(false);
     }
   }
@@ -237,6 +252,10 @@ export default function SetupPage() {
                   {saving ? "Guardando..." : "Empezar a usar FisioIA"}
                 </Button>
               </div>
+
+              {saveError && (
+                <p className="text-destructive text-xs">{saveError}</p>
+              )}
             </div>
           )}
         </CardContent>

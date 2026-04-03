@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     .filter((h) => h.isActive)
     .sort((a, b) => b.probability - a.probability)[0];
 
-  const { error } = await supabase.from("dev_feedback_log").insert({
+  const baseInsert = {
     patient_zone: sessionState.selectedZones.map((z) => z.label),
     patient_profile: sessionState.occupationalLoad,
     patient_age: sessionState.patientAge ?? null,
@@ -69,10 +69,20 @@ export async function POST(request: NextRequest) {
     diagnostic_accuracy: diagnosticAccuracy,
     utility,
     difficulty,
-    reasoning_failures: reasoningFailures ?? null,
     notes: notes ?? null,
     raw_session_state: sessionState as unknown as Json,
+  };
+
+  let { error } = await supabase.from("dev_feedback_log").insert({
+    ...baseInsert,
+    reasoning_failures: reasoningFailures ?? null,
   });
+
+  // Backward-compatible fallback for environments that have not applied
+  // migration 002 yet (missing reasoning_failures column).
+  if (error?.message.includes("reasoning_failures")) {
+    ({ error } = await supabase.from("dev_feedback_log").insert(baseInsert));
+  }
 
   if (error) {
     return NextResponse.json(

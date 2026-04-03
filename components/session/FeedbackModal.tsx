@@ -38,6 +38,7 @@ interface FeedbackModalProps {
     notes?: string;
   }) => void;
   isSubmitting?: boolean;
+  errorMessage?: string | null;
 }
 
 export function FeedbackModal({
@@ -45,6 +46,7 @@ export function FeedbackModal({
   onClose,
   onSubmit,
   isSubmitting = false,
+  errorMessage = null,
 }: FeedbackModalProps) {
   const [accuracy, setAccuracy] = useState<DiagnosticAccuracy | null>(null);
   const [utility, setUtility] = useState<Utility | null>(null);
@@ -212,6 +214,10 @@ export function FeedbackModal({
           >
             {isSubmitting ? "Guardando..." : "Guardar y cerrar"}
           </Button>
+
+          {errorMessage && (
+            <p className="text-destructive text-xs">{errorMessage}</p>
+          )}
         </div>
       </DialogContent>
     </Dialog>

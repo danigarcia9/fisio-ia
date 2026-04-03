@@ -43,6 +43,45 @@ export async function POST(request: NextRequest) {
 
   const supabase = createServiceClient();
 
+  // Phase 0 uses a single professional profile.
+  // If one already exists, update it to keep setup idempotent.
+  const { data: existingProfile, error: existingError } = await supabase
+    .from("professional_profiles")
+    .select("id")
+    .limit(1)
+    .single();
+
+  if (existingError && existingError.code !== "PGRST116") {
+    return NextResponse.json(
+      { error: "Failed to check existing profile", details: existingError.message },
+      { status: 500 }
+    );
+  }
+
+  if (existingProfile) {
+    const { data, error } = await supabase
+      .from("professional_profiles")
+      .update({
+        name: parsed.data.name,
+        email: parsed.data.email ?? null,
+        contexts: parsed.data.contexts,
+        active_context_id: parsed.data.activeContextId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existingProfile.id)
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json(
+        { error: "Failed to update existing profile", details: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ profile: data });
+  }
+
   const { data, error } = await supabase
     .from("professional_profiles")
     .insert({
