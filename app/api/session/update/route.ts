@@ -4,6 +4,8 @@ import { updateDiagnosticSession } from "@/lib/ai/agent";
 import { createStructuredStreamResponse } from "@/lib/ai/stream";
 import type { ClinicContext } from "@/lib/schemas/profile";
 
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const parsed = UpdateSessionRequestSchema.safeParse(body);
